@@ -271,6 +271,7 @@ start(App *app)
     g_application_hold(G_APPLICATION(app->application));
     settings_load(&app->settings);
     trace_startup("settings loaded");
+    gtk_window_set_default_icon_name(MYTOOTH_ID);
     app->view = view_new(app);
     trace_startup("view created");
     app->tray = tray_new(app);
@@ -328,7 +329,6 @@ main(int argc, char **argv)
     gdk_set_allowed_backends("wayland");
     g_set_prgname("mytooth");
     g_set_application_name("Mytooth");
-    gtk_window_set_default_icon_name(MYTOOTH_ID);
     App app = {0};
     app.cancel = g_cancellable_new();
     app.application = gtk_application_new(MYTOOTH_ID, G_APPLICATION_HANDLES_COMMAND_LINE);
