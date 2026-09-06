@@ -329,6 +329,7 @@ main(int argc, char **argv)
     gdk_set_allowed_backends("wayland");
     g_set_prgname("mytooth");
     g_set_application_name("Mytooth");
+    trace_startup("creating application");
     App app = {0};
     app.cancel = g_cancellable_new();
     app.application = gtk_application_new(MYTOOTH_ID, G_APPLICATION_HANDLES_COMMAND_LINE);
@@ -347,6 +348,7 @@ main(int argc, char **argv)
     g_signal_connect(app.application, "activate", G_CALLBACK(activate), &app);
     guint sigterm = g_unix_signal_add(SIGTERM, unix_quit, &app);
     guint sigint = g_unix_signal_add(SIGINT, unix_quit, &app);
+    trace_startup("entering application run");
     int result = g_application_run(G_APPLICATION(app.application), argc, argv);
     app_quit(&app);
     if (app.refresh_idle) g_source_remove(app.refresh_idle);
