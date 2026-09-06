@@ -62,6 +62,9 @@ def main():
             api.AddDevice("hci0", "AA:BB:CC:DD:EE:FF", "<b>Headphones</b> 日本語")
             app = launch([binary, "--debug"], "mytooth.log", {"WAYLAND_DEBUG": "client"})
             wait_for(lambda: bus.name_has_owner("io.github.the_specter_x.Mytooth"), "Mytooth instance")
+            time.sleep(0.5)
+            if "startup: command line received" not in (logs / "mytooth.log").read_text():
+                print("Mytooth wait channel:", Path(f"/proc/{app.pid}/wchan").read_text().strip(), flush=True)
             wait_for(lambda: 'set_app_id("io.github.the_specter_x.Mytooth")' in
                      (logs / "mytooth.log").read_text(), "visible native Wayland window")
             assert app.poll() is None, "Mytooth exited during startup"
