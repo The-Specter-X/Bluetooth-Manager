@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "app.h"
-#include <xapp-status-icon.h>
+#include <libxapp/xapp-status-icon.h>
 
 struct Tray { App *app; XAppStatusIcon *icon; GtkWidget *menu; gboolean had_host; };
 
