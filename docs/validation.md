@@ -17,7 +17,11 @@
 The fake BlueZ service runs on a private test bus and never uses a real adapter.
 CI builds on Debian trixie and runs AddressSanitizer/UndefinedBehaviorSanitizer.
 The Wayland job uses Weston without XWayland and exercises the real executable,
-application identity, missing-tray recovery, device/service changes and single-instance quit.
+desktop identity, device/service changes and single-instance quit. Weston headless
+has no input seat or native XApp host, so the harness excludes only GTK 3's
+corresponding, exact `gdk_seat_get_keyboard` and fallback-icon scale diagnostics;
+every other critical remains a failure. Native XApp host behavior is intentionally
+left to the Cinnamon target checklist.
 See the GitHub Actions results for the status of each commit.
 
 The editing environment cannot open Unix sockets, so local D-Bus and compositor
