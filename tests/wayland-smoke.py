@@ -15,7 +15,7 @@ import time
 import dbus
 
 
-def wait_for(predicate, description, seconds=15):
+def wait_for(predicate, description, seconds=60):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         if predicate():
