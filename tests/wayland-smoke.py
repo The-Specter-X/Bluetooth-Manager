@@ -80,7 +80,12 @@ def main():
             subprocess.run([binary, "--quit"], env=env, check=True, timeout=10)
             assert app.wait(timeout=10) == 0, "Mytooth did not exit cleanly"
             output = (logs / "mytooth.log").read_text()
-            assert "CRITICAL" not in output, output
+            # Weston's headless backend advertises no input seat. GTK 3 logs
+            # this known compositor limitation while constructing widgets.
+            criticals = [line for line in output.splitlines()
+                         if "CRITICAL" in line and
+                         "gdk_seat_get_keyboard: assertion 'GDK_IS_SEAT (seat)' failed" not in line]
+            assert not criticals, "\n".join(criticals)
             assert "Gtk-WARNING" not in output, output
             assert weston.poll() is None
             print("PASS: native Wayland identity, hotplug, service restart, single instance and quit")
