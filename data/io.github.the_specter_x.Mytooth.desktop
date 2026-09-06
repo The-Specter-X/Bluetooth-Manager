@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Mytooth
+GenericName=Bluetooth Manager
+Comment=Pair and manage Bluetooth devices
+Exec=mytooth
+TryExec=mytooth
+Icon=io.github.the_specter_x.Mytooth
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=Bluetooth;Pair;Headphones;Keyboard;
+StartupNotify=true
+DBusActivatable=false
