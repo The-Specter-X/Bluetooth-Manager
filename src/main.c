@@ -7,6 +7,13 @@
 
 static gboolean debug_logging;
 
+static void
+trace_startup(const char *stage)
+{
+    if (g_getenv("MYTOOTH_TEST_TRACE"))
+        g_printerr("startup: %s\n", stage);
+}
+
 static GLogWriterOutput
 log_writer(GLogLevelFlags level, const GLogField *fields, gsize count, gpointer data)
 {
@@ -257,14 +264,19 @@ notifications_vanished(GDBusConnection *bus, const char *name, gpointer data)
 static void
 start(App *app)
 {
+    trace_startup("start entered");
     if (app->started)
         return;
     app->started = TRUE;
     g_application_hold(G_APPLICATION(app->application));
     settings_load(&app->settings);
+    trace_startup("settings loaded");
     app->view = view_new(app);
+    trace_startup("view created");
     app->tray = tray_new(app);
+    trace_startup("tray created");
     app->radio = rfkill_new(app_refresh, app);
+    trace_startup("rfkill opened");
     app->notification_watch = g_bus_watch_name_on_connection(
         g_application_get_dbus_connection(G_APPLICATION(app->application)),
         "org.freedesktop.Notifications", G_BUS_NAME_WATCHER_FLAGS_NONE,
@@ -279,6 +291,7 @@ start(App *app)
     else
         app_error(app, "The system bus is unavailable.");
     app_refresh(app);
+    trace_startup("start complete");
     g_debug("Mytooth started using native Wayland");
 }
 
@@ -286,6 +299,7 @@ static int
 command_line(GApplication *application, GApplicationCommandLine *line, gpointer data)
 {
     App *app = data;
+    trace_startup("command line received");
     GVariantDict *options = g_application_command_line_get_options_dict(line);
     if (g_variant_dict_contains(options, "quit")) {
         app_quit(app);
@@ -297,6 +311,7 @@ command_line(GApplication *application, GApplicationCommandLine *line, gpointer 
     start(app);
     if (!app->background)
         app_show(app);
+    trace_startup("command line complete");
     return 0;
 }
 
