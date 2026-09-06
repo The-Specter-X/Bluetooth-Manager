@@ -35,6 +35,7 @@ def main():
         env.update(XDG_RUNTIME_DIR=temp, XDG_CONFIG_HOME=f"{temp}/config",
                    WAYLAND_DISPLAY="mytooth-test", GDK_BACKEND="wayland",
                    G_DEBUG="fatal-criticals", GSETTINGS_BACKEND="memory",
+                   NO_AT_BRIDGE="1",
                    MYTOOTH_TEST_TRACE="1",
                    DBUS_SYSTEM_BUS_ADDRESS=os.environ["DBUS_SESSION_BUS_ADDRESS"])
         env.pop("DISPLAY", None)
