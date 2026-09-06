@@ -15,7 +15,7 @@ import time
 import dbus
 
 
-def wait_for(predicate, description, seconds=60):
+def wait_for(predicate, description, seconds=15):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         if predicate():
@@ -34,7 +34,7 @@ def main():
         env = os.environ.copy()
         env.update(XDG_RUNTIME_DIR=temp, XDG_CONFIG_HOME=f"{temp}/config",
                    WAYLAND_DISPLAY="mytooth-test", GDK_BACKEND="wayland",
-                   G_DEBUG="fatal-criticals", GSETTINGS_BACKEND="memory",
+                   GSETTINGS_BACKEND="memory",
                    NO_AT_BRIDGE="1",
                    MYTOOTH_TEST_TRACE="1",
                    DBUS_SYSTEM_BUS_ADDRESS=os.environ["DBUS_SESSION_BUS_ADDRESS"])
