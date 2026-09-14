@@ -96,6 +96,7 @@ service_call(GDBusConnection *connection, const char *sender, const char *path,
         fixture->removes++;
     } else if (g_str_equal(method, "SendFile")) {
         fixture->sends++;
+        put(fixture, "Status", g_variant_new_string("active"));
         g_dbus_method_invocation_return_value(invocation,
             g_variant_new("(o@a{sv})", TRANSFER, properties(fixture)));
         return;
@@ -148,7 +149,11 @@ wait_until(gboolean (*predicate)(gpointer), gpointer data)
 }
 
 static gboolean receiver_ready(gpointer data) { return obex_client_ready(((Fixture *)data)->client); }
-static gboolean sent(gpointer data) { return ((Fixture *)data)->sends > 0 && obex_client_name(((Fixture *)data)->client); }
+static gboolean sent(gpointer data) {
+    Fixture *fixture = data;
+    return fixture->sends > 0 &&
+        g_strcmp0(obex_client_status(fixture->client), "active") == 0;
+}
 static gboolean prompted(gpointer data) { return obex_client_has_prompt(((Fixture *)data)->client); }
 static gboolean finished(gpointer data) { return ((Fixture *)data)->completed > 0; }
 static gboolean removed(gpointer data) { return ((Fixture *)data)->removes > 0; }
