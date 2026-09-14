@@ -13,6 +13,9 @@
 - Device removal/reappearance, discoverability timeout ordering and failed connection retry.
 - PIN/passkey requests, confirmation, authorization and service authorization.
 - Display-passkey progress, cancellation, locking during a prompt and spoofed bus callers.
+- PAN capability/state from BlueZ and volatile NetworkManager activation/disconnection.
+- OBEX sending, cancellation, incoming approval, lock rejection and spoofed callers.
+- Incoming filename traversal, collision handling, private permissions and symlink rejection.
 
 The fake BlueZ service runs on a private test bus and never uses a real adapter.
 CI builds on Debian trixie and runs AddressSanitizer/UndefinedBehaviorSanitizer.
@@ -45,7 +48,14 @@ Do not infer native tray menu support from libxapp's compile-time minimum alone.
       rejected request, timeout and user cancellation.
 - [ ] Mouse/controller pairing and reconnection after resume.
 - [ ] Headset/speaker pairing, reconnect and playback through PipeWire/WirePlumber;
-      headset microphone behavior tested through the existing sound settings.
+      switch every offered high-quality/headset profile and test its microphone.
+- [ ] Send multiple small and large files; cancel while creating the OBEX session and
+      during transfer; unplug the adapter and restart `obexd` mid-transfer.
+- [ ] Receive files with Unicode, separators, duplicate names and missing size;
+      approve/reject/timeout/lock cases never overwrite or escape Downloads/Bluetooth.
+- [ ] PAN tether to Android and iOS NAP devices; NetworkManager obtains addressing,
+      routes and DNS, then removes the volatile connection after disconnection,
+      suspend and service restart.
 - [ ] Battery reporting checked on supported devices; missing data stays unknown.
 - [ ] Unplug adapter during scanning, pairing and connecting; reconnect it.
 - [ ] Restart bluetooth.service during operations; no stale state or duplicate agent.

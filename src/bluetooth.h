@@ -21,6 +21,9 @@ void bt_client_method(BtClient *self, const char *path, const char *interface,
 void bt_client_set(BtClient *self, const char *path, const char *interface,
                    const char *property, GVariant *value);
 void bt_client_discoverable(BtClient *self, const char *path, gboolean enabled);
+/* Activates a complete, volatile PAN connection through NetworkManager. */
+void bt_client_pan(BtClient *self, const char *device_path, gboolean connect);
+gboolean bt_client_pan_available(BtClient *self);
 void bt_client_scan(BtClient *self, const char *adapter_path); /* NULL stops our scan */
 const char *bt_client_scan_path(BtClient *self);
 void bt_client_error(BtClient *self, const char *message);
