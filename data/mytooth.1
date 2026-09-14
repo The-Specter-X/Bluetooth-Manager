@@ -1,0 +1,47 @@
+.TH MYTOOTH 1 "September 2026" "Mytooth 0.1.0"
+.SH NAME
+mytooth \- Bluetooth manager for Cinnamon Wayland
+.SH SYNOPSIS
+.B mytooth
+.RB [ --background ]
+.RB [ --debug ]
+.RB [ --quit ]
+.RB [ --version ]
+.SH DESCRIPTION
+Mytooth manages BlueZ adapters, discovery, pairing, devices and battery information.
+It runs as the logged-in user and requires GTK 3, libxapp, BlueZ and a native Wayland session.
+Closing the window retains the tray and pairing agent when a native XApp tray host is available.
+Quit ends Mytooth without powering off adapters or disconnecting devices.
+.SH OPTIONS
+.TP
+.B --background
+Start with the window hidden. If no native XApp tray host appears, show the window.
+.TP
+.B --debug
+Enable diagnostic logging for this process. Pairing secrets are not logged.
+.TP
+.B --quit
+Quit the running instance.
+.TP
+.B --version
+Print the application version.
+.SH FILES
+.I $XDG_CONFIG_HOME/mytooth/settings.ini
+(normally ~/.config/mytooth/settings.ini) stores window size and notification preferences.
+.PP
+.I $XDG_CONFIG_HOME/autostart/io.github.the_specter_x.Mytooth.desktop
+stores the optional login startup entry.
+.SH LOGGING
+When stderr is a terminal, logs are written there. Otherwise logs go to the
+systemd journal, with stderr as fallback when journald is unavailable.
+Read them with:
+.PP
+.B journalctl -t mytooth -b
+.PP
+The journal controls retention and storage, normally /var/log/journal for
+persistent storage or /run/log/journal for volatile storage. Mytooth does not
+write or rotate its own log files and does not require root privileges.
+.SH NOTES
+Incoming requests require Mytooth to be the default BlueZ agent. Pairing is
+paused while Cinnamon reports an active screensaver, or its status is unknown.
+Avoid running another Bluetooth pairing agent at the same time.

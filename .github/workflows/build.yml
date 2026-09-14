@@ -1,0 +1,54 @@
+name: Build and test Mytooth
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container: debian:trixie
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential meson ninja-build pkg-config libgtk-3-dev libxapp-dev libglib2.0-dev dbus desktop-file-utils
+      - name: Build and test
+        run: |
+          meson setup build --werror
+          meson compile -C build
+          meson test -C build --print-errorlogs
+          desktop-file-validate data/io.github.the_specter_x.Mytooth.desktop
+          DESTDIR="$PWD/stage" meson install -C build
+      - name: Address and undefined behavior sanitizers
+        run: |
+          meson setup build-sanitize --werror -Db_sanitize=address,undefined -Db_lundef=false
+          meson compile -C build-sanitize
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 meson test -C build-sanitize --print-errorlogs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: debian-test-logs
+          path: |
+            build/meson-logs/
+            build-sanitize/meson-logs/
+  wayland:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and compositor dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential meson ninja-build pkg-config libgtk-3-dev libxapp-dev dbus weston python3-dbusmock python3-gi
+      - name: Build
+        run: |
+          meson setup build --werror
+          meson compile -C build
+      - name: Native Wayland smoke test
+        run: dbus-run-session -- /usr/bin/python3 tests/wayland-smoke.py build/mytooth
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wayland-test-logs
+          path: build/smoke-logs/
