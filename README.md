@@ -3,7 +3,8 @@
 A Bluetooth manager written in C for an LMDE-based distribution running
 **Cinnamon on Wayland**. GTK 3 provides the widgets; Mint's libxapp provides the
 tray integration. BlueZ remains responsible for Bluetooth protocols and pairing
-records. There is no X11 backend in Mytooth.
+records. Wayland is the release target, while GTK's normal X11 backend remains
+available for development and transition testing.
 
 This is the implementation of roadmap steps 1–7, **not a hardware-certified
 release**. See [validation](docs/validation.md) for the automated checks and the
@@ -73,7 +74,8 @@ sudo meson install -C build
 
 This does not enable startup, remove Blueman, change system policy or modify
 Bluetooth configuration. Stop the competing Blueman applet before testing Mytooth
-as the default pairing agent. Distribution replacement and packaging are a later step.
+as the default pairing and file-receiving agent. Distribution replacement and
+packaging are a later step.
 
 ## Running
 
