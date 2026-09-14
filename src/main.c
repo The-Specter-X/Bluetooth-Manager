@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "app.h"
-#include <gdk/gdkwayland.h>
 #include <glib-unix.h>
 #include <unistd.h>
 #include <string.h>
@@ -327,7 +326,7 @@ start(App *app)
     else
         app_error(app, "The system bus is unavailable.");
     app_refresh(app);
-    g_debug("Mytooth started using native Wayland");
+    g_debug("Mytooth started");
 }
 
 static int
@@ -357,8 +356,6 @@ main(int argc, char **argv)
         if (g_str_equal(argv[i], "--version")) { g_print("Mytooth 0.1.0\n"); return 0; }
     }
     g_log_set_writer_func(log_writer, NULL, NULL);
-    /* A process-level backend selection prevents GTK and XApp's legacy tray fallback using X11. */
-    gdk_set_allowed_backends("wayland");
     /* GTK 3 uses the program name as the Wayland app_id; match the desktop file. */
     g_set_prgname(MYTOOTH_ID);
     g_set_application_name("Mytooth");
