@@ -567,8 +567,15 @@ registered(GObject *source, GAsyncResult *result, gpointer data)
     g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
     if (!self->stopped && request->generation == self->generation) {
         self->ready = reply != NULL;
-        if (!reply && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-            report_error(self, "The Bluetooth file receiver could not register.");
+        if (!reply && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+            g_autofree char *remote_error = g_dbus_error_get_remote_error(error);
+            if (g_strcmp0(remote_error, "org.bluez.obex.Error.AlreadyExists") == 0)
+                report_error(self, "Another Bluetooth file receiver is already running. "
+                                   "Stop it and restart Mytooth to receive files.");
+            else
+                report_error(self, "The Bluetooth file receiver could not register.");
+            g_debug("OBEX receiver registration failed: %s", error->message);
+        }
         changed(self);
     }
     g_object_unref(self);
