@@ -271,7 +271,7 @@ pan_connection_settings(const char *address)
     g_variant_builder_init(&section, G_VARIANT_TYPE_VARDICT);
     g_variant_builder_add(&section, "{sv}", "method", g_variant_new_string("auto"));
     g_variant_builder_add(&settings, "{s@a{sv}}", "ipv6", g_variant_builder_end(&section));
-    return g_variant_ref_sink(g_variant_builder_end(&settings));
+    return g_variant_builder_end(&settings);
 }
 
 static void
