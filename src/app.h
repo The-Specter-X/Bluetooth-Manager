@@ -5,6 +5,8 @@
 #include "settings.h"
 #include "rfkill.h"
 #include "session.h"
+#include "obex.h"
+#include "audio.h"
 
 typedef struct View View;
 typedef struct Tray Tray;
@@ -13,6 +15,8 @@ typedef struct {
     GDBusConnection *system_bus;
     BtClient *client;
     BtAgent *agent;
+    ObexClient *obex;
+    AudioClient *audio;
     GCancellable *cancel;
     Session *session;
     Rfkill *radio;
@@ -45,6 +49,8 @@ void view_refresh(View *view);
 void view_error(View *view, const char *message);
 GtkWindow *view_window(View *view);
 void view_pairing(View *view);
+void view_obex_prompt(View *view);
+void view_obex_transfer(View *view);
 
 Tray *tray_new(App *app);
 void tray_free(Tray *tray);

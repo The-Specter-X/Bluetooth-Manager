@@ -10,12 +10,13 @@ add_project_arguments(cc.get_supported_arguments([
 gio = dependency('gio-unix-2.0', version: '>=2.66')
 gtk = dependency('gtk+-3.0', version: '>=3.24')
 xapp = dependency('xapp', version: '>=2.0')
+pulse = dependency('libpulse-mainloop-glib', version: '>=13.0')
 inc = include_directories('src')
 core = static_library('mytooth-core', 'src/bluetooth.c', 'src/agent.c',
-  'src/util.c', dependencies: gio, include_directories: inc)
+  'src/obex.c', 'src/util.c', dependencies: gio, include_directories: inc)
 executable('mytooth', 'src/main.c', 'src/window.c', 'src/tray.c',
-  'src/settings.c', 'src/rfkill.c', 'src/session.c',
-  link_with: core, dependencies: [gio, gtk, xapp], install: true)
+  'src/settings.c', 'src/rfkill.c', 'src/session.c', 'src/audio.c',
+  link_with: core, dependencies: [gio, gtk, xapp, pulse], install: true)
 
 install_data('data/io.github.the_specter_x.Mytooth.desktop',
   install_dir: get_option('datadir') / 'applications')

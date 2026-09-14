@@ -6,6 +6,7 @@
 #define BT_ADAPTER "org.bluez.Adapter1"
 #define BT_DEVICE "org.bluez.Device1"
 #define BT_BATTERY "org.bluez.Battery1"
+#define BT_NETWORK "org.bluez.Network1"
 
 /* Property strings are newly allocated. Missing/invalid properties use defaults. */
 char *bt_string(GDBusProxy *proxy, const char *property, const char *fallback);

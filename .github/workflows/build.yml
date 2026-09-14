@@ -13,7 +13,7 @@ jobs:
       - name: Install build dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends build-essential meson ninja-build pkg-config libgtk-3-dev libxapp-dev libglib2.0-dev dbus desktop-file-utils
+          apt-get install -y --no-install-recommends build-essential meson ninja-build pkg-config libgtk-3-dev libxapp-dev libglib2.0-dev libpulse-dev dbus desktop-file-utils
       - name: Build and test
         run: |
           meson setup build --werror
@@ -40,7 +40,7 @@ jobs:
       - name: Install build and compositor dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential meson ninja-build pkg-config libgtk-3-dev libxapp-dev dbus weston python3-dbusmock python3-gi
+          sudo apt-get install -y --no-install-recommends build-essential meson ninja-build pkg-config libgtk-3-dev libxapp-dev libpulse-dev dbus weston python3-dbusmock python3-gi
       - name: Build
         run: |
           meson setup build --werror

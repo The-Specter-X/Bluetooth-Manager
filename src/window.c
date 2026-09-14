@@ -49,6 +49,19 @@ struct View {
     GtkWidget *detail_block;
     GtkWidget *detail_save;
     GtkWidget *detail_forget;
+    GtkWidget *detail_send;
+    GtkWidget *detail_pan_box;
+    GtkWidget *detail_pan_status;
+    GtkWidget *detail_pan_button;
+    GtkWidget *detail_audio_box;
+    GtkWidget *detail_audio_status;
+    GtkWidget *detail_audio_combo;
+    GtkFileChooserNative *file_chooser;
+    GtkWidget *obex_prompt_dialog;
+    GtkWidget *obex_prompt_text;
+    GtkWidget *transfer_dialog;
+    GtkWidget *transfer_text;
+    GtkWidget *transfer_progress;
 };
 
 static GtkWidget *
@@ -205,6 +218,65 @@ detail_toggle(GtkToggleButton *widget, gpointer data)
     app_refresh(view->app);
 }
 
+static void
+pan_clicked(GtkButton *widget, gpointer data)
+{
+    View *view = data;
+    g_autoptr(GDBusProxy) network = bt_client_proxy(view->app->client,
+        view->detail_path, BT_NETWORK);
+    if (network)
+        bt_client_pan(view->app->client, view->detail_path,
+                      !bt_boolean(network, "Connected"));
+}
+
+static void
+audio_changed(GtkComboBox *combo, gpointer data)
+{
+    View *view = data;
+    if (view->updating || !view->detail_path)
+        return;
+    g_autoptr(GDBusProxy) device = bt_client_proxy(view->app->client,
+        view->detail_path, BT_DEVICE);
+    g_autofree char *address = bt_string(device, "Address", "");
+    const char *profile = gtk_combo_box_get_active_id(combo);
+    if (profile && !audio_client_set_profile(view->app->audio, address, profile))
+        app_error(view->app, "The selected Bluetooth audio profile is no longer available.");
+}
+
+static void
+file_chosen(GtkNativeDialog *dialog, gint response, gpointer data)
+{
+    View *view = data;
+    if (response == GTK_RESPONSE_ACCEPT && !view->app->closing && view->detail_path) {
+        GSList *selected = gtk_file_chooser_get_filenames(GTK_FILE_CHOOSER(dialog));
+        g_autoptr(GPtrArray) paths = g_ptr_array_new_with_free_func(g_free);
+        for (GSList *item = selected; item; item = item->next)
+            g_ptr_array_add(paths, item->data);
+        g_slist_free(selected);
+        g_autoptr(GDBusProxy) device = bt_client_proxy(view->app->client,
+            view->detail_path, BT_DEVICE);
+        g_autofree char *address = bt_string(device, "Address", "");
+        g_autoptr(GError) error = NULL;
+        if (!device || !obex_client_send(view->app->obex, address, paths, &error))
+            app_error(view->app, error ? error->message : "This device is no longer available.");
+    }
+    view->file_chooser = NULL;
+    g_object_unref(dialog);
+}
+
+static void
+send_files(GtkButton *widget, gpointer data)
+{
+    View *view = data;
+    if (view->file_chooser)
+        return;
+    view->file_chooser = gtk_file_chooser_native_new("Send Files over Bluetooth",
+        GTK_WINDOW(view->details), GTK_FILE_CHOOSER_ACTION_OPEN, "Send", "Cancel");
+    gtk_file_chooser_set_select_multiple(GTK_FILE_CHOOSER(view->file_chooser), TRUE);
+    g_signal_connect(view->file_chooser, "response", G_CALLBACK(file_chosen), view);
+    gtk_native_dialog_show(GTK_NATIVE_DIALOG(view->file_chooser));
+}
+
 typedef struct { App *app; char *device; char *adapter; } Forget;
 
 static void
@@ -282,11 +354,50 @@ refresh_details(View *view)
     view->updating = TRUE;
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(view->detail_trust), bt_boolean(device, "Trusted"));
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(view->detail_block), bt_boolean(device, "Blocked"));
-    view->updating = FALSE;
     gtk_widget_set_sensitive(view->detail_trust, !busy);
     gtk_widget_set_sensitive(view->detail_block, !busy);
     gtk_widget_set_sensitive(view->detail_save, !busy);
     gtk_widget_set_sensitive(view->detail_forget, !busy);
+    gtk_widget_set_sensitive(view->detail_send, !busy && bt_boolean(device, "Paired") &&
+        !bt_boolean(device, "Blocked") && obex_client_available(view->app->obex) &&
+        !obex_client_busy(view->app->obex));
+
+    g_autoptr(GDBusProxy) network = bt_client_proxy(view->app->client,
+        view->detail_path, BT_NETWORK);
+    gtk_widget_set_visible(view->detail_pan_box, network != NULL);
+    if (network) {
+        gboolean connected = bt_boolean(network, "Connected");
+        g_autofree char *interface = bt_string(network, "Interface", "");
+        gboolean available = bt_client_pan_available(view->app->client);
+        g_autofree char *network_text = !available ?
+            g_strdup("NetworkManager is unavailable") : connected && interface[0] ?
+            g_strdup_printf("Connected as %s · managed by NetworkManager", interface) :
+            g_strdup(connected ? "Connected · managed by NetworkManager" :
+                                 "Use this device's Network Access Point for internet access");
+        gtk_label_set_text(GTK_LABEL(view->detail_pan_status), network_text);
+        gtk_button_set_label(GTK_BUTTON(view->detail_pan_button),
+                             connected ? "Disconnect Network" : "Connect Network");
+        gtk_widget_set_sensitive(view->detail_pan_button, available && !busy &&
+                                 bt_boolean(device, "Paired") && !bt_boolean(device, "Blocked"));
+    }
+
+    g_autoptr(GPtrArray) profiles = audio_client_profiles(view->app->audio, address);
+    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(view->detail_audio_combo));
+    const char *active_profile = NULL;
+    for (guint i = 0; i < profiles->len; i++) {
+        AudioProfile *profile = g_ptr_array_index(profiles, i);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(view->detail_audio_combo),
+                                  profile->name, profile->description);
+        if (profile->active)
+            active_profile = profile->name;
+    }
+    gtk_combo_box_set_active_id(GTK_COMBO_BOX(view->detail_audio_combo), active_profile);
+    gtk_label_set_text(GTK_LABEL(view->detail_audio_status),
+        audio_client_busy(view->app->audio) ? "Changing audio profile…" :
+        "Profiles and codecs are provided by PipeWire/WirePlumber.");
+    gtk_widget_set_visible(view->detail_audio_box, profiles->len > 0);
+    gtk_widget_set_sensitive(view->detail_audio_combo, !audio_client_busy(view->app->audio));
+    view->updating = FALSE;
 }
 
 static void
@@ -324,6 +435,26 @@ show_details(GtkButton *widget, gpointer data)
     g_signal_connect(view->detail_block, "toggled", G_CALLBACK(detail_toggle), view);
     gtk_box_pack_start(GTK_BOX(box), view->detail_trust, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), view->detail_block, FALSE, FALSE, 0);
+    view->detail_send = button("Send Files…", G_CALLBACK(send_files), view);
+    gtk_box_pack_start(GTK_BOX(box), view->detail_send, FALSE, FALSE, 0);
+
+    view->detail_audio_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 7);
+    gtk_box_pack_start(GTK_BOX(view->detail_audio_box), label("Audio profile", "heading"), FALSE, FALSE, 0);
+    view->detail_audio_combo = gtk_combo_box_text_new();
+    g_signal_connect(view->detail_audio_combo, "changed", G_CALLBACK(audio_changed), view);
+    gtk_box_pack_start(GTK_BOX(view->detail_audio_box), view->detail_audio_combo, FALSE, FALSE, 0);
+    view->detail_audio_status = label("", "dim-label");
+    gtk_box_pack_start(GTK_BOX(view->detail_audio_box), view->detail_audio_status, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), view->detail_audio_box, FALSE, FALSE, 0);
+
+    view->detail_pan_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 7);
+    gtk_box_pack_start(GTK_BOX(view->detail_pan_box), label("Bluetooth network", "heading"), FALSE, FALSE, 0);
+    view->detail_pan_status = label("", "dim-label");
+    gtk_label_set_line_wrap(GTK_LABEL(view->detail_pan_status), TRUE);
+    gtk_box_pack_start(GTK_BOX(view->detail_pan_box), view->detail_pan_status, FALSE, FALSE, 0);
+    view->detail_pan_button = button("Connect Network", G_CALLBACK(pan_clicked), view);
+    gtk_box_pack_start(GTK_BOX(view->detail_pan_box), view->detail_pan_button, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), view->detail_pan_box, FALSE, FALSE, 0);
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     view->detail_info = label("", "dim-label");
@@ -335,8 +466,8 @@ show_details(GtkButton *widget, gpointer data)
     view->detail_forget = button("Forget Device…", G_CALLBACK(detail_forget), view);
     gtk_style_context_add_class(gtk_widget_get_style_context(view->detail_forget), "destructive-action");
     gtk_box_pack_start(GTK_BOX(box), view->detail_forget, FALSE, FALSE, 0);
-    refresh_details(view);
     gtk_widget_show_all(view->details);
+    refresh_details(view);
 }
 
 static void
@@ -412,7 +543,9 @@ update_row(DeviceRow *row, GDBusProxy *device, gboolean powered)
     if (pending) {
         state = g_str_equal(pending, "Pair") ? "Pairing…" :
             g_str_equal(pending, "Connect") ? "Connecting…" :
-            g_str_equal(pending, "Disconnect") ? "Disconnecting…" : "Updating…";
+            g_str_equal(pending, "Disconnect") ? "Disconnecting…" :
+            g_str_equal(pending, "ConnectNetwork") ? "Connecting tethering…" :
+            g_str_equal(pending, "DisconnectNetwork") ? "Disconnecting tethering…" : "Updating…";
     }
     g_autofree char *status = level >= 0 ? g_strdup_printf("%s · %d%% battery", state, level) : g_strdup(state);
     gtk_label_set_text(GTK_LABEL(row->status), status);
@@ -706,6 +839,125 @@ GtkWindow *view_window(View *view) { return GTK_WINDOW(view->window); }
 void view_error(View *view, const char *message) { if (view) { gtk_label_set_text(GTK_LABEL(view->error_text), message); gtk_widget_show(view->error_bar); } }
 
 static void
+obex_prompt_destroyed(GtkWidget *widget, gpointer data)
+{
+    ((View *)data)->obex_prompt_dialog = NULL;
+}
+
+static void
+obex_prompt_response(GtkDialog *dialog, gint response, gpointer data)
+{
+    View *view = data;
+    obex_client_answer(view->app->obex, response == GTK_RESPONSE_ACCEPT);
+}
+
+void
+view_obex_prompt(View *view)
+{
+    if (!view || !view->app->obex)
+        return;
+    if (!obex_client_has_prompt(view->app->obex)) {
+        if (view->obex_prompt_dialog)
+            gtk_widget_destroy(view->obex_prompt_dialog);
+        return;
+    }
+    if (!view->obex_prompt_dialog) {
+        view_show(view);
+        view->obex_prompt_dialog = gtk_dialog_new_with_buttons("Incoming Bluetooth File",
+            GTK_WINDOW(view->window), GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+            "Reject", GTK_RESPONSE_REJECT, "Save File", GTK_RESPONSE_ACCEPT, NULL);
+        gtk_dialog_set_default_response(GTK_DIALOG(view->obex_prompt_dialog), GTK_RESPONSE_REJECT);
+        gtk_window_set_default_size(GTK_WINDOW(view->obex_prompt_dialog), 460, 220);
+        g_signal_connect(view->obex_prompt_dialog, "response", G_CALLBACK(obex_prompt_response), view);
+        g_signal_connect(view->obex_prompt_dialog, "destroy", G_CALLBACK(obex_prompt_destroyed), view);
+        GtkWidget *box = gtk_dialog_get_content_area(GTK_DIALOG(view->obex_prompt_dialog));
+        gtk_container_set_border_width(GTK_CONTAINER(box), 24);
+        gtk_box_set_spacing(GTK_BOX(box), 16);
+        view->obex_prompt_text = label("", NULL);
+        gtk_label_set_line_wrap(GTK_LABEL(view->obex_prompt_text), TRUE);
+        gtk_label_set_max_width_chars(GTK_LABEL(view->obex_prompt_text), 52);
+        gtk_box_pack_start(GTK_BOX(box), view->obex_prompt_text, FALSE, FALSE, 0);
+        GtkWidget *warning = label("Only accept files you expected. Accepted files are saved in a private Downloads/Bluetooth folder.", "dim-label");
+        gtk_label_set_line_wrap(GTK_LABEL(warning), TRUE);
+        gtk_box_pack_start(GTK_BOX(box), warning, FALSE, FALSE, 0);
+        gtk_widget_show_all(view->obex_prompt_dialog);
+    }
+    const char *name = obex_client_prompt_name(view->app->obex);
+    guint64 size = obex_client_prompt_size(view->app->obex);
+    g_autofree char *size_text = size ? g_format_size(size) : g_strdup("Size not reported");
+    g_autofree char *text = g_strdup_printf("A nearby Bluetooth device wants to send:\n\n%s\n%s",
+        name ? name : "Bluetooth file", size_text);
+    gtk_label_set_text(GTK_LABEL(view->obex_prompt_text), text);
+}
+
+static void
+transfer_destroyed(GtkWidget *widget, gpointer data)
+{
+    ((View *)data)->transfer_dialog = NULL;
+}
+
+static void
+transfer_response(GtkDialog *dialog, gint response, gpointer data)
+{
+    View *view = data;
+    if (obex_client_busy(view->app->obex))
+        obex_client_cancel(view->app->obex);
+}
+
+void
+view_obex_transfer(View *view)
+{
+    if (!view || !view->app->obex)
+        return;
+    gboolean visible = obex_client_busy(view->app->obex) &&
+        !obex_client_has_prompt(view->app->obex);
+    if (!visible) {
+        if (view->transfer_dialog)
+            gtk_widget_destroy(view->transfer_dialog);
+        return;
+    }
+    if (!view->transfer_dialog) {
+        view->transfer_dialog = gtk_dialog_new_with_buttons("Bluetooth File Transfer",
+            GTK_WINDOW(view->window), GTK_DIALOG_DESTROY_WITH_PARENT,
+            "Cancel Transfer", GTK_RESPONSE_CANCEL, NULL);
+        gtk_window_set_default_size(GTK_WINDOW(view->transfer_dialog), 440, 180);
+        g_signal_connect(view->transfer_dialog, "response", G_CALLBACK(transfer_response), view);
+        g_signal_connect(view->transfer_dialog, "destroy", G_CALLBACK(transfer_destroyed), view);
+        GtkWidget *box = gtk_dialog_get_content_area(GTK_DIALOG(view->transfer_dialog));
+        gtk_container_set_border_width(GTK_CONTAINER(box), 24);
+        gtk_box_set_spacing(GTK_BOX(box), 14);
+        view->transfer_text = label("", NULL);
+        gtk_label_set_line_wrap(GTK_LABEL(view->transfer_text), TRUE);
+        gtk_box_pack_start(GTK_BOX(box), view->transfer_text, FALSE, FALSE, 0);
+        view->transfer_progress = gtk_progress_bar_new();
+        gtk_progress_bar_set_show_text(GTK_PROGRESS_BAR(view->transfer_progress), TRUE);
+        gtk_box_pack_start(GTK_BOX(box), view->transfer_progress, FALSE, FALSE, 0);
+        gtk_widget_show_all(view->transfer_dialog);
+    }
+    guint64 sent = obex_client_transferred(view->app->obex);
+    guint64 size = obex_client_size(view->app->obex);
+    const char *name = obex_client_name(view->app->obex);
+    const char *status = obex_client_status(view->app->obex);
+    g_autofree char *text = obex_client_incoming(view->app->obex) ?
+        g_strdup_printf("Receiving %s\n%s", name ? name : "Bluetooth file", status ? status : "active") :
+        g_strdup_printf("Sending %s (%u of %u)\n%s", name ? name : "Bluetooth file",
+            obex_client_file_number(view->app->obex), obex_client_file_count(view->app->obex),
+            status ? status : "active");
+    gtk_label_set_text(GTK_LABEL(view->transfer_text), text);
+    if (size) {
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(view->transfer_progress),
+            CLAMP((double)sent / (double)size, 0.0, 1.0));
+        g_autofree char *sent_text = g_format_size(sent);
+        g_autofree char *size_text = g_format_size(size);
+        g_autofree char *progress = g_strdup_printf("%s of %s", sent_text, size_text);
+        gtk_progress_bar_set_text(GTK_PROGRESS_BAR(view->transfer_progress), progress);
+    } else {
+        gtk_progress_bar_pulse(GTK_PROGRESS_BAR(view->transfer_progress));
+        gtk_progress_bar_set_text(GTK_PROGRESS_BAR(view->transfer_progress), "Preparing…");
+    }
+}
+
+static void
 pair_response(GtkDialog *dialog, gint response, gpointer data)
 {
     View *view = data;
@@ -770,6 +1022,10 @@ view_free(View *view)
 {
     if (!view)
         return;
+    if (view->file_chooser) {
+        gtk_native_dialog_destroy(GTK_NATIVE_DIALOG(view->file_chooser));
+        g_clear_object(&view->file_chooser);
+    }
     g_hash_table_unref(view->rows);
     gtk_widget_destroy(view->window);
     g_free(view->filter);

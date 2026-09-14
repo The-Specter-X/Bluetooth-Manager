@@ -8,6 +8,8 @@ custom daemon, shell-command Bluetooth backend, database or root helper.
 | `main.c` | Application lifecycle, actions, notifications, logging, connecting modules |
 | `bluetooth.c` | BlueZ object manager, asynchronous operations and owned discovery |
 | `agent.c` | BlueZ Agent1 implementation and pending pairing prompt |
+| `obex.c` | BlueZ OBEX client/agent, transfer state and safe receive paths |
+| `audio.c` | PulseAudio-compatible Bluetooth card/profile cache and switching |
 | `window.c` | Standard GTK widgets, stable device rows, dialogs and error presentation |
 | `tray.c` | XApp status icon and quick actions |
 | `session.c` | Cinnamon lock state and logind suspend signals |
@@ -44,14 +46,31 @@ requests when the session is locked/unknown. Dialog responses complete the D-Bus
 invocation exactly once. Display updates retain the same prompt and deadline.
 No pairing secrets are written to the log.
 
+OBEX runs on the session bus used by `obexd`. Mytooth registers one OBEX Agent1,
+validates every call against the current unique service owner, and allows one
+outgoing batch or incoming transfer at a time. Every incoming file needs explicit
+approval. The private receive directory is owned by the user and mode `0700`;
+remote names are reduced to a safe basename and never overwrite an existing path.
+Transfer progress comes from Transfer1 property changes, with Cancel and
+RemoveSession used for cleanup.
+
+Audio profiles come from the default PulseAudio protocol server. On the target this
+is normally PipeWire-Pulse, so Mytooth does not bypass WirePlumber policy or invoke
+`pactl`. Mytooth detects NAP support and link state through BlueZ Network1, while
+NetworkManager activates a volatile `panu` connection and owns DHCP, routes and DNS.
+The temporary profile disappears after disconnection. Mytooth does not host a NAP,
+create a bridge, change firewall rules or install a root helper.
+
 ## Deliberate dependencies
 
 GTK requires GLib/GObject/GIO; their async D-Bus APIs avoid implementing message
 marshalling, object lifetime and bus tracking ourselves. GtkApplication supplies
 single-instance behavior and desktop identity. GNotification uses the desktop
 notification service. GKeyFile handles the few preferences without a settings schema.
-XApp supplies the Mint tray integration. No GNOME Shell, libadwaita, libhandy,
-GNOME Bluetooth or GNOME Settings Daemon dependency is introduced.
+XApp supplies the Mint tray integration. libpulse supplies a small stable async
+client API that works with PulseAudio and PipeWire-Pulse. No GNOME Shell, libadwaita, libhandy,
+GNOME Bluetooth or GNOME Settings Daemon dependency is introduced. NetworkManager
+is used over its standard D-Bus API without adding a second client-side object model.
 
 XApp is Mint's tray protocol; it is not a Wayland core protocol. BlueZ D-Bus,
 freedesktop desktop entries/notifications and kernel rfkill are used as documented.
@@ -62,6 +81,12 @@ GDK is restricted to its Wayland backend; Mytooth does not contain an X11 fallba
 - [BlueZ Adapter API](https://bluez.readthedocs.io/en/latest/adapter-api/)
 - [BlueZ Device API](https://bluez.readthedocs.io/en/latest/device-api/)
 - [BlueZ Agent API](https://bluez.readthedocs.io/en/latest/agent-api/)
+- [BlueZ OBEX API](https://bluez.readthedocs.io/en/latest/obex-api/)
+- [BlueZ OBEX Agent API](https://bluez.readthedocs.io/en/latest/obex-agent-api/)
+- [BlueZ Network API](https://bluez.readthedocs.io/en/latest/network-api/)
+- [NetworkManager D-Bus API](https://networkmanager.dev/docs/api/latest/gdbus-org.freedesktop.NetworkManager.html)
+- [NetworkManager Bluetooth settings](https://networkmanager.dev/docs/api/latest/settings-bluetooth.html)
+- [PulseAudio introspection API](https://freedesktop.org/software/pulseaudio/doxygen/introspect_8h.html)
 - [GDBusObjectManagerClient](https://docs.gtk.org/gio/class.DBusObjectManagerClient.html)
 - [XApp status icon source](https://github.com/linuxmint/xapp/blob/master/libxapp/xapp-status-icon.c)
 - [Cinnamon screensaver interface](https://github.com/linuxmint/cinnamon-screensaver/blob/master/libcscreensaver/org.cinnamon.ScreenSaver.xml)

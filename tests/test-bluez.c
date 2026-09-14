@@ -5,6 +5,11 @@
 #define DEVICE ADAPTER "/dev_AA_BB_CC_DD_EE_FF"
 #define AGENT "/io/github/the_specter_x/Mytooth/agent"
 #define MANAGER "org.bluez.AgentManager1"
+#define NM_SERVICE "org.freedesktop.NetworkManager"
+#define NM_PATH "/org/freedesktop/NetworkManager"
+#define NM_MANAGER "org.freedesktop.NetworkManager"
+#define NM_DEVICE_PATH NM_PATH "/Devices/1"
+#define NM_DEVICE "org.freedesktop.NetworkManager.Device"
 
 typedef struct {
     GTestDBus *bus;
@@ -13,9 +18,11 @@ typedef struct {
     BtClient *client;
     BtAgent *agent;
     GDBusNodeInfo *info;
+    GDBusNodeInfo *nm_info;
     GHashTable *adapter;
     GHashTable *device;
     GHashTable *battery;
+    GHashTable *network;
     GDBusMethodInvocation *pending_pair;
     GDBusMethodInvocation *pending_scan;
     char *agent_sender;
@@ -27,6 +34,8 @@ typedef struct {
     guint stops;
     guint operations;
     guint errors;
+    guint pan_activations;
+    guint pan_disconnections;
 } Fixture;
 
 static const char xml[] =
@@ -56,7 +65,19 @@ static const char xml[] =
     "<property name='Alias' type='s' access='readwrite'/>"
     "<property name='Address' type='s' access='read'/>"
     "<property name='Adapter' type='o' access='read'/></interface>"
-    "<interface name='org.bluez.Battery1'><property name='Percentage' type='y' access='read'/></interface></node>";
+    "<interface name='org.bluez.Battery1'><property name='Percentage' type='y' access='read'/></interface>"
+    "<interface name='org.bluez.Network1'><method name='Connect'><arg type='s' direction='in'/><arg type='s' direction='out'/></method>"
+    "<method name='Disconnect'/><property name='Connected' type='b' access='read'/>"
+    "<property name='Interface' type='s' access='read'/><property name='UUID' type='s' access='read'/></interface></node>";
+
+static const char nm_xml[] =
+    "<node><interface name='org.freedesktop.NetworkManager'>"
+    "<method name='GetAllDevices'><arg type='ao' direction='out'/></method>"
+    "<method name='AddAndActivateConnection2'><arg type='a{sa{sv}}' direction='in'/>"
+    "<arg type='o' direction='in'/><arg type='o' direction='in'/><arg type='a{sv}' direction='in'/>"
+    "<arg type='o' direction='out'/><arg type='o' direction='out'/><arg type='a{sv}' direction='out'/></method></interface>"
+    "<interface name='org.freedesktop.NetworkManager.Device'><method name='Disconnect'/>"
+    "<property name='HwAddress' type='s' access='read'/><property name='DeviceType' type='u' access='read'/></interface></node>";
 
 static void
 iterate_until(gboolean (*predicate)(Fixture *), Fixture *f)
@@ -81,6 +102,7 @@ props(Fixture *f, const char *interface)
     if (g_str_equal(interface, BT_ADAPTER)) return f->adapter;
     if (g_str_equal(interface, BT_DEVICE)) return f->device;
     if (g_str_equal(interface, BT_BATTERY)) return f->battery;
+    if (g_str_equal(interface, BT_NETWORK)) return f->network;
     return NULL;
 }
 
@@ -106,6 +128,7 @@ device_interfaces(Fixture *f)
     g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sa{sv}}"));
     g_variant_builder_add(&builder, "{s@a{sv}}", BT_DEVICE, dictionary(f->device));
     g_variant_builder_add(&builder, "{s@a{sv}}", BT_BATTERY, dictionary(f->battery));
+    g_variant_builder_add(&builder, "{s@a{sv}}", BT_NETWORK, dictionary(f->network));
     return g_variant_builder_end(&builder);
 }
 
@@ -124,7 +147,7 @@ static void
 remove_device(Fixture *f)
 {
     f->device_present = FALSE;
-    const char *interfaces[] = { BT_DEVICE, BT_BATTERY, NULL };
+    const char *interfaces[] = { BT_DEVICE, BT_BATTERY, BT_NETWORK, NULL };
     g_dbus_connection_emit_signal(f->service, NULL, "/", "org.freedesktop.DBus.ObjectManager",
         "InterfacesRemoved", g_variant_new("(o^as)", DEVICE, interfaces), NULL);
 }
@@ -135,6 +158,53 @@ service_call(GDBusConnection *connection, const char *sender, const char *path,
              GDBusMethodInvocation *invocation, gpointer data)
 {
     Fixture *f = data;
+    if (g_str_equal(interface, NM_MANAGER) && g_str_equal(method, "GetAllDevices")) {
+        const char *devices[] = { NM_DEVICE_PATH, NULL };
+        g_dbus_method_invocation_return_value(invocation, g_variant_new("(^ao)", devices));
+        return;
+    }
+    if (g_str_equal(interface, NM_MANAGER) &&
+        g_str_equal(method, "AddAndActivateConnection2")) {
+        g_autoptr(GVariant) settings = NULL;
+        g_autoptr(GVariant) options = NULL;
+        const char *device_path, *specific_path;
+        g_variant_get(parameters, "(@a{sa{sv}}&o&o@a{sv})", &settings,
+            &device_path, &specific_path, &options);
+        g_assert_cmpstr(device_path, ==, NM_DEVICE_PATH);
+        g_assert_cmpstr(specific_path, ==, "/");
+        g_autoptr(GVariant) bluetooth = g_variant_lookup_value(settings,
+            "bluetooth", G_VARIANT_TYPE_VARDICT);
+        g_assert_nonnull(bluetooth);
+        g_autofree char *type = NULL;
+        g_assert_true(g_variant_lookup(bluetooth, "type", "s", &type));
+        g_assert_cmpstr(type, ==, "panu");
+        g_autoptr(GVariant) bdaddr = g_variant_lookup_value(bluetooth, "bdaddr",
+            G_VARIANT_TYPE_BYTESTRING);
+        g_assert_nonnull(bdaddr);
+        gsize address_size = 0;
+        const guint8 *address = g_variant_get_fixed_array(bdaddr, &address_size, 1);
+        const guint8 expected[] = { 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff };
+        g_assert_cmpuint(address_size, ==, G_N_ELEMENTS(expected));
+        g_assert_cmpmem(address, address_size, expected, sizeof(expected));
+        g_autofree char *persist = NULL;
+        g_assert_true(g_variant_lookup(options, "persist", "s", &persist));
+        g_assert_cmpstr(persist, ==, "volatile");
+        f->pan_activations++;
+        change(f, DEVICE, BT_NETWORK, "Connected", g_variant_new_boolean(TRUE));
+        change(f, DEVICE, BT_NETWORK, "Interface", g_variant_new_string("bnep0"));
+        GVariantBuilder result;
+        g_variant_builder_init(&result, G_VARIANT_TYPE_VARDICT);
+        g_dbus_method_invocation_return_value(invocation,
+            g_variant_new("(ooa{sv})", NM_PATH "/Settings/1",
+                NM_PATH "/ActiveConnection/1", &result));
+        return;
+    }
+    if (g_str_equal(interface, NM_DEVICE) && g_str_equal(method, "Disconnect")) {
+        f->pan_disconnections++;
+        change(f, DEVICE, BT_NETWORK, "Connected", g_variant_new_boolean(FALSE));
+        g_dbus_method_invocation_return_value(invocation, NULL);
+        return;
+    }
     if (g_str_equal(method, "GetManagedObjects")) {
         GVariantBuilder objects, interfaces;
         g_variant_builder_init(&objects, G_VARIANT_TYPE("a{oa{sa{sv}}}"));
@@ -149,7 +219,17 @@ service_call(GDBusConnection *connection, const char *sender, const char *path,
         g_dbus_method_invocation_return_value(invocation, g_variant_new("(a{oa{sa{sv}}})", &objects));
         return;
     }
-    if (g_str_equal(method, "RegisterAgent")) {
+    if (g_str_equal(interface, BT_NETWORK) && g_str_equal(method, "Connect")) {
+        const char *uuid;
+        g_variant_get(parameters, "(&s)", &uuid);
+        g_assert_cmpstr(uuid, ==, "nap");
+        change(f, DEVICE, BT_NETWORK, "Connected", g_variant_new_boolean(TRUE));
+        change(f, DEVICE, BT_NETWORK, "Interface", g_variant_new_string("bnep0"));
+        g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", "bnep0"));
+        return;
+    } else if (g_str_equal(interface, BT_NETWORK) && g_str_equal(method, "Disconnect")) {
+        change(f, DEVICE, BT_NETWORK, "Connected", g_variant_new_boolean(FALSE));
+    } else if (g_str_equal(method, "RegisterAgent")) {
         const char *agent_path, *capability;
         g_variant_get(parameters, "(&o&s)", &agent_path, &capability);
         g_assert_cmpstr(agent_path, ==, AGENT);
@@ -195,6 +275,12 @@ static GVariant *
 get_property(GDBusConnection *connection, const char *sender, const char *path,
              const char *interface, const char *property, GError **error, gpointer data)
 {
+    if (g_str_equal(interface, NM_DEVICE)) {
+        if (g_str_equal(property, "HwAddress"))
+            return g_variant_ref_sink(g_variant_new_string("AA:BB:CC:DD:EE:FF"));
+        if (g_str_equal(property, "DeviceType"))
+            return g_variant_ref_sink(g_variant_new_uint32(5));
+    }
     GHashTable *table = props(data, interface);
     GVariant *value = table ? g_hash_table_lookup(table, property) : NULL;
     return value ? g_variant_ref(value) : NULL;
@@ -213,18 +299,20 @@ static const GDBusInterfaceVTable vtable = {
 };
 
 static void
-own_name(Fixture *f, gboolean acquire)
+own_service(Fixture *f, const char *service, gboolean acquire)
 {
     g_autoptr(GError) error = NULL;
     g_autoptr(GVariant) reply = g_dbus_connection_call_sync(f->service,
         "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
         acquire ? "RequestName" : "ReleaseName",
-        acquire ? g_variant_new("(su)", "org.bluez", 0u) : g_variant_new("(s)", "org.bluez"),
+        acquire ? g_variant_new("(su)", service, 0u) : g_variant_new("(s)", service),
         NULL, G_DBUS_CALL_FLAGS_NONE, 2000, NULL, &error);
     g_assert_no_error(error);
 }
 
-static gboolean ready(Fixture *f) { return bt_agent_is_default(f->agent); }
+static void own_name(Fixture *f, gboolean acquire) { own_service(f, "org.bluez", acquire); }
+
+static gboolean ready(Fixture *f) { return bt_agent_is_default(f->agent) && bt_client_pan_available(f->client); }
 static gboolean unavailable(Fixture *f) { return bt_client_owner(f->client) == NULL; }
 static gboolean idle(Fixture *f) { return !bt_client_busy(f->client, DEVICE) && !bt_client_busy(f->client, ADAPTER); }
 static gboolean pairing(Fixture *f) { return f->pending_pair != NULL; }
@@ -249,6 +337,7 @@ setup(Fixture *f, gconstpointer data)
     f->adapter = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_variant_unref);
     f->device = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_variant_unref);
     f->battery = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_variant_unref);
+    f->network = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_variant_unref);
     put(f->adapter, "Powered", g_variant_new_boolean(TRUE));
     put(f->adapter, "Discovering", g_variant_new_boolean(FALSE));
     put(f->adapter, "Discoverable", g_variant_new_boolean(FALSE));
@@ -262,16 +351,30 @@ setup(Fixture *f, gconstpointer data)
     for (guint i = 0; i < G_N_ELEMENTS(booleans); i++)
         put(f->device, booleans[i], g_variant_new_boolean(FALSE));
     put(f->battery, "Percentage", g_variant_new_byte(73));
+    put(f->network, "Connected", g_variant_new_boolean(FALSE));
+    put(f->network, "Interface", g_variant_new_string(""));
+    put(f->network, "UUID", g_variant_new_string(""));
     f->device_present = TRUE;
     f->info = g_dbus_node_info_new_for_xml(xml, &error);
     g_assert_no_error(error);
-    const char *paths[] = { "/", "/org/bluez", ADAPTER, DEVICE, DEVICE };
+    f->nm_info = g_dbus_node_info_new_for_xml(nm_xml, &error);
+    g_assert_no_error(error);
+    const char *paths[] = { "/", "/org/bluez", ADAPTER, DEVICE, DEVICE, DEVICE };
     for (guint i = 0; i < G_N_ELEMENTS(paths); i++) {
         guint registration = g_dbus_connection_register_object(f->service, paths[i], f->info->interfaces[i], &vtable, f, NULL, &error);
         g_assert_no_error(error);
         g_assert_cmpuint(registration, >, 0);
     }
+    guint registration = g_dbus_connection_register_object(f->service, NM_PATH,
+        f->nm_info->interfaces[0], &vtable, f, NULL, &error);
+    g_assert_no_error(error);
+    g_assert_cmpuint(registration, >, 0);
+    registration = g_dbus_connection_register_object(f->service, NM_DEVICE_PATH,
+        f->nm_info->interfaces[1], &vtable, f, NULL, &error);
+    g_assert_no_error(error);
+    g_assert_cmpuint(registration, >, 0);
     own_name(f, TRUE);
+    own_service(f, NM_SERVICE, TRUE);
     f->client = bt_client_new(f->connection);
     f->agent = bt_agent_new(f->client);
     bt_agent_set_locked(f->agent, FALSE);
@@ -304,9 +407,11 @@ teardown(Fixture *f, gconstpointer data)
     g_object_unref(f->connection);
     g_object_unref(f->service);
     g_dbus_node_info_unref(f->info);
+    g_dbus_node_info_unref(f->nm_info);
     g_hash_table_unref(f->adapter);
     g_hash_table_unref(f->device);
     g_hash_table_unref(f->battery);
+    g_hash_table_unref(f->network);
     g_free(f->agent_sender);
     g_test_dbus_down(f->bus);
     g_object_unref(f->bus);
@@ -525,6 +630,25 @@ test_connection_failure(Fixture *f, gconstpointer data)
     g_assert_true(g_variant_get_boolean(g_hash_table_lookup(f->device, "Connected")));
 }
 
+static gboolean pan_connected(Fixture *f) { g_autoptr(GDBusProxy) p = bt_client_proxy(f->client, DEVICE, BT_NETWORK); return bt_boolean(p, "Connected"); }
+
+static void
+test_pan(Fixture *f, gconstpointer data)
+{
+    g_autoptr(GDBusProxy) network = bt_client_proxy(f->client, DEVICE, BT_NETWORK);
+    g_assert_nonnull(network);
+    bt_client_pan(f->client, DEVICE, TRUE);
+    iterate_until(pan_connected, f);
+    iterate_until(idle, f);
+    g_autofree char *interface = bt_string(network, "Interface", "");
+    g_assert_cmpstr(interface, ==, "bnep0");
+    g_assert_cmpuint(f->pan_activations, ==, 1);
+    bt_client_pan(f->client, DEVICE, FALSE);
+    iterate_until(idle, f);
+    g_assert_false(bt_boolean(network, "Connected"));
+    g_assert_cmpuint(f->pan_disconnections, ==, 1);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -536,6 +660,7 @@ main(int argc, char **argv)
     g_test_add("/bluez/hotplug", Fixture, NULL, setup, test_hotplug, teardown);
     g_test_add("/bluez/visibility-timeout", Fixture, NULL, setup, test_visibility, teardown);
     g_test_add("/bluez/connection-failure-retry", Fixture, NULL, setup, test_connection_failure, teardown);
+    g_test_add("/bluez/pan-connect-disconnect", Fixture, NULL, setup, test_pan, teardown);
     g_test_add("/agent/pin", Fixture, "RequestPinCode", setup, test_agent, teardown);
     g_test_add("/agent/passkey", Fixture, "RequestPasskey", setup, test_agent, teardown);
     g_test_add("/agent/confirmation", Fixture, "RequestConfirmation", setup, test_agent, teardown);

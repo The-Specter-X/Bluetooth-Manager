@@ -5,7 +5,7 @@ A Bluetooth manager written in C for an LMDE-based distribution running
 tray integration. BlueZ remains responsible for Bluetooth protocols and pairing
 records. There is no X11 backend in Mytooth.
 
-This is the initial implementation of roadmap steps 1–5, **not a hardware-certified
+This is the implementation of roadmap steps 1–7, **not a hardware-certified
 release**. See [validation](docs/validation.md) for the automated checks and the
 remaining target-system tests. Native Cinnamon tray menu behavior depends on the
 versions of XApp and Muffin shipped by the distribution.
@@ -24,35 +24,44 @@ versions of XApp and Muffin shipped by the distribution.
 - Notifications, optional login startup, close-to-tray, and explicit quit.
 - BlueZ restart/hotplug handling, cancellation during session lock/suspend,
   software/hardware rfkill reporting when `/dev/rfkill` is readable.
+- Send one or more files with BlueZ OBEX; receive requests require approval,
+  support cancellation, and save to a protected `Downloads/Bluetooth` directory.
+- Select the available Bluetooth audio card profile through the native PulseAudio
+  client API (also served by PipeWire-Pulse).
+- Connect or disconnect a paired device's Bluetooth Network Access Point (PAN)
+  through NetworkManager, including address, route and DNS configuration.
 - Unprivileged logging to the journal or terminal; debug mode is opt-in.
 
 Pairing and connecting are separate actions. Pairing does **not** automatically
 trust a device. Reconnection policy remains with BlueZ and the installed audio/input
 stack; Mytooth does not run a reconnect loop.
 
-File transfers, audio-profile selection, Bluetooth PAN networking and Debian
-packaging belong to later roadmap steps. Audio devices can already be paired and
-connected; playback depends on your existing PipeWire/WirePlumber setup.
+Mytooth implements PAN client tethering, not local NAP hosting. Hosting would need
+privileged bridge/firewall policy and is intentionally deferred instead of adding a
+root helper. Debian packaging remains the next roadmap step.
 
 ## Build
 
 On the target LMDE/Debian installation:
 
 ```sh
-sudo apt install build-essential meson ninja-build pkg-config libgtk-3-dev libxapp-dev libglib2.0-dev
+sudo apt install build-essential meson ninja-build pkg-config libgtk-3-dev libxapp-dev libglib2.0-dev libpulse-dev
 meson setup build --werror
 meson compile -C build
 meson test -C build --print-errorlogs
 ./build/mytooth
 ```
 
-Minimum compile-time APIs: C17, GLib/GIO 2.66, GTK 3.24, libxapp 2.0, Meson 0.61.
+Minimum compile-time APIs: C17, GLib/GIO 2.66, GTK 3.24, libxapp 2.0,
+libpulse 13.0 and Meson 0.61.
 These are API minimums, **not a guarantee that an old XApp release supports native
 Wayland tray menus**. The target distro must supply a compatible XApp status applet,
 libxapp Wayland menu implementation, and Muffin compositor. Record the tested package
 versions in the target validation checklist.
 
-BlueZ must be installed and its service running. Cinnamon's screensaver service
+BlueZ, `bluez-obexd` and NetworkManager must be installed and running for the
+complete feature set.
+Cinnamon's screensaver service
 must report an unlocked session for new pairing prompts. Standard Bluetooth
 devices still require appropriate kernel drivers, firmware and audio/input support.
 
@@ -102,6 +111,12 @@ Preferences: `$XDG_CONFIG_HOME/mytooth/settings.ini`, normally
 `~/.config/mytooth/settings.ini`. Login entry:
 `~/.config/autostart/io.github.the_specter_x.Mytooth.desktop`. Pairing records and
 device properties are owned by BlueZ; Mytooth does not duplicate them.
+
+Incoming files are stored in `$XDG_DOWNLOAD_DIR/Bluetooth` (normally
+`~/Downloads/Bluetooth`). Mytooth creates that leaf directory with mode `0700`,
+removes path separators and control characters from remote names, and chooses a new
+name instead of overwriting an existing file. It never opens a received file
+automatically.
 
 ## Development
 

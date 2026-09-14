@@ -85,8 +85,39 @@ app_refresh(gpointer data)
     return G_SOURCE_REMOVE;
 }
 
-static void model_changed(GObject *object, gpointer data) { app_refresh(data); }
+static void
+model_changed(GObject *object, gpointer data)
+{
+    App *app = data;
+    if (app->obex && app->agent)
+        obex_client_set_locked(app->obex, bt_agent_locked(app->agent));
+    app_refresh(app);
+}
 static void model_error(BtClient *client, const char *message, gpointer data) { app_error(data, message); }
+
+static void
+obex_prompt_changed(ObexClient *client, gpointer data)
+{
+    App *app = data;
+    view_obex_prompt(app->view);
+    if (obex_client_has_prompt(client))
+        app_notify(app, "file-request", "Incoming Bluetooth file",
+                   "Open Mytooth to approve or reject the file.");
+    else
+        g_application_withdraw_notification(G_APPLICATION(app->application), "file-request");
+}
+
+static void obex_changed(ObexClient *client, gpointer data) { App *app = data; view_obex_transfer(app->view); app_refresh(app); }
+static void obex_error(ObexClient *client, const char *message, gpointer data) { app_error(data, message); }
+static void audio_error(AudioClient *client, const char *message, gpointer data) { app_error(data, message); }
+
+static void
+obex_completed(ObexClient *client, gboolean incoming, const char *name, gpointer data)
+{
+    App *app = data;
+    app_notify(app, "file-transfer", incoming ? "Bluetooth file received" : "Bluetooth files sent",
+               incoming ? "The file was saved in Downloads/Bluetooth." : "The transfer completed successfully.");
+}
 
 static void
 operation_done(BtClient *client, const char *path, const char *method, gboolean success, gpointer data)
@@ -100,6 +131,10 @@ operation_done(BtClient *client, const char *path, const char *method, gboolean 
         app_notify(app, "operation", "Device connected", "The Bluetooth connection is ready.");
     else if (g_str_equal(method, "Disconnect"))
         app_notify(app, "operation", "Device disconnected", "The Bluetooth connection has ended.");
+    else if (g_str_equal(method, "ConnectNetwork"))
+        app_notify(app, "operation", "Bluetooth tethering started", "NetworkManager is activating the connection.");
+    else if (g_str_equal(method, "DisconnectNetwork"))
+        app_notify(app, "operation", "Bluetooth tethering stopped", "The PAN connection has ended.");
 }
 
 static void
@@ -184,6 +219,10 @@ app_quit(App *app)
     app->closing = TRUE;
     if (app->agent)
         bt_agent_stop(app->agent);
+    if (app->obex)
+        obex_client_stop(app->obex);
+    if (app->audio)
+        audio_client_stop(app->audio);
     if (app->client)
         bt_client_stop(app->client);
     g_cancellable_cancel(app->cancel);
@@ -266,6 +305,14 @@ start(App *app)
     app->view = view_new(app);
     app->tray = tray_new(app);
     app->radio = rfkill_new(app_refresh, app);
+    app->obex = obex_client_new(g_application_get_dbus_connection(G_APPLICATION(app->application)));
+    g_signal_connect(app->obex, "changed", G_CALLBACK(obex_changed), app);
+    g_signal_connect(app->obex, "prompt-changed", G_CALLBACK(obex_prompt_changed), app);
+    g_signal_connect(app->obex, "error", G_CALLBACK(obex_error), app);
+    g_signal_connect(app->obex, "completed", G_CALLBACK(obex_completed), app);
+    app->audio = audio_client_new();
+    g_signal_connect(app->audio, "changed", G_CALLBACK(model_changed), app);
+    g_signal_connect(app->audio, "error", G_CALLBACK(audio_error), app);
     app->notification_watch = g_bus_watch_name_on_connection(
         g_application_get_dbus_connection(G_APPLICATION(app->application)),
         "org.freedesktop.Notifications", G_BUS_NAME_WATCHER_FLAGS_NONE,
@@ -345,8 +392,12 @@ main(int argc, char **argv)
     if (app.client) g_signal_handlers_disconnect_by_data(app.client, &app);
     if (app.agent) g_signal_handlers_disconnect_by_data(app.agent, &app);
     if (app.system_bus) g_signal_handlers_disconnect_by_data(app.system_bus, &app);
+    if (app.obex) g_signal_handlers_disconnect_by_data(app.obex, &app);
+    if (app.audio) g_signal_handlers_disconnect_by_data(app.audio, &app);
     tray_free(app.tray);
     view_free(app.view);
+    g_clear_object(&app.obex);
+    g_clear_object(&app.audio);
     g_clear_object(&app.agent);
     g_clear_object(&app.client);
     if (app.system_bus && !g_dbus_connection_is_closed(app.system_bus))
