@@ -357,7 +357,10 @@ test_cancel_pending_session(Fixture *fixture, gconstpointer data)
     g_ptr_array_add(paths, path);
     g_assert_true(obex_client_send(fixture->client, "AA:BB:CC:DD:EE:FF", NULL, paths, NULL));
     wait_until(session_pending, fixture);
-    obex_client_cancel(fixture->client);
+    if (data)
+        obex_client_stop(fixture->client);
+    else
+        obex_client_cancel(fixture->client);
     g_dbus_method_invocation_return_value(fixture->pending_session, g_variant_new("(o)", SESSION));
     g_clear_object(&fixture->pending_session);
     wait_until(removed, fixture);
@@ -448,6 +451,7 @@ main(int argc, char **argv)
     g_test_add("/obex/send", Fixture, NULL, setup, test_send, teardown);
     g_test_add("/obex/cancel", Fixture, NULL, setup, test_cancel, teardown);
     g_test_add("/obex/cancel-pending-session", Fixture, NULL, setup, test_cancel_pending_session, teardown);
+    g_test_add("/obex/stop-pending-session", Fixture, "stop", setup, test_cancel_pending_session, teardown);
     g_test_add("/obex/early-completion", Fixture, NULL, setup, test_early_completion, teardown);
     g_test_add("/obex/batch", Fixture, NULL, setup, test_batch, teardown);
     g_test_add("/obex/receiver-conflict-retry", Fixture, NULL, setup, test_receiver_retry, teardown);

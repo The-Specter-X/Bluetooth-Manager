@@ -63,13 +63,15 @@ Sources (upstream):
 | Architecture/manual still said GTK was Wayland-restricted | Correct documentation; keep Wayland and add X11 transition smoke coverage |
 | No installable target-test package | Add conventional Debian/debhelper binary packaging and a CI artifact; no applet/policy/autostart changes |
 | Unused UI ordering/prompt fields | Remove dead state without changing stable row insertion behavior |
+| Malformed preference values overwrote defaults with zero/false | Preserve defaults on parse errors and test save/load/autostart plus file permissions |
 
 ## Verification
 
 Regression tests now cover early completion, a two-file batch, selected-adapter
-Source, delayed session cancellation, cancellation during incoming approval,
+Source, delayed session cancellation/shutdown, cancellation during incoming approval,
 registration conflict/retry, sender identity, suspend/unlock/query ordering,
-shutdown pairing cancellation, exact audio addresses and filename controls/bounds.
+shutdown pairing cancellation, exact audio addresses, filename controls/bounds
+and preferences save/load/error handling with private file permissions.
 
 The CI workflow is the verification gate: strict Debian build and C tests,
 ASan/UBSan with leak detection, Debian binary package build, native Wayland

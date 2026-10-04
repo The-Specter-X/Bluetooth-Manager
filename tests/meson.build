@@ -7,3 +7,6 @@ test('bluez-integration', integration, timeout: 60)
 obex_integration = executable('test-obex', 'test-obex.c', include_directories: inc,
   link_with: core, dependencies: gio)
 test('obex-integration', obex_integration, timeout: 60)
+settings_test = executable('test-settings', 'test-settings.c', '../src/settings.c',
+  include_directories: inc, dependencies: gio)
+test('settings', settings_test)

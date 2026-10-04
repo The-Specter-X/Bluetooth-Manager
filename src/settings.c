@@ -23,12 +23,18 @@ settings_load(Settings *settings)
     g_autoptr(GKeyFile) file = g_key_file_new();
     if (!g_key_file_load_from_file(file, path, G_KEY_FILE_NONE, NULL))
         return;
-    if (g_key_file_has_key(file, "Window", "width", NULL))
-        settings->width = CLAMP(g_key_file_get_integer(file, "Window", "width", NULL), 600, 2400);
-    if (g_key_file_has_key(file, "Window", "height", NULL))
-        settings->height = CLAMP(g_key_file_get_integer(file, "Window", "height", NULL), 420, 1600);
-    if (g_key_file_has_key(file, "General", "notifications", NULL))
-        settings->notifications = g_key_file_get_boolean(file, "General", "notifications", NULL);
+    g_autoptr(GError) error = NULL;
+    gint width = g_key_file_get_integer(file, "Window", "width", &error);
+    if (!error)
+        settings->width = CLAMP(width, 600, 2400);
+    g_clear_error(&error);
+    gint height = g_key_file_get_integer(file, "Window", "height", &error);
+    if (!error)
+        settings->height = CLAMP(height, 420, 1600);
+    g_clear_error(&error);
+    gboolean notifications = g_key_file_get_boolean(file, "General", "notifications", &error);
+    if (!error)
+        settings->notifications = notifications;
 }
 
 gboolean

@@ -467,10 +467,11 @@ obex_client_send(ObexClient *self, const char *address, const char *source,
     request->client = g_object_ref(self);
     request->generation = self->generation;
     request->operation = self->operation;
+    /* Keep the reply after cancellation so a late-created session can be removed. */
     g_dbus_connection_call(self->bus, self->owner, OBEX_ROOT, OBEX_CLIENT_INTERFACE,
         "CreateSession", g_variant_new("(s@a{sv})", address, g_variant_builder_end(&options)),
         G_VARIANT_TYPE("(o)"), G_DBUS_CALL_FLAGS_NO_AUTO_START, 30000,
-        self->cancel, session_created, request);
+        NULL, session_created, request);
     return TRUE;
 }
 

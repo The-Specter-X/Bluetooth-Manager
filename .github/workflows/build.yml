@@ -27,11 +27,15 @@ jobs:
           meson compile -C build-sanitize
           ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:fast_unwind_on_malloc=0 UBSAN_OPTIONS=halt_on_error=1 meson test -C build-sanitize --print-errorlogs
       - name: Build Debian binary package
-        run: dpkg-buildpackage --build=binary --no-sign
+        run: |
+          dpkg-buildpackage --build=binary --no-sign
+          mkdir -p build/packages
+          cp ../mytooth*.deb build/packages/
       - uses: actions/upload-artifact@v4
         with:
           name: mytooth-debian-packages
-          path: ../mytooth_*.deb
+          path: build/packages/*.deb
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:

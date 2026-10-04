@@ -17,11 +17,12 @@
 - OBEX sending, cancellation, incoming approval, lock rejection and spoofed callers.
 - Incoming filename traversal, collision handling, private permissions and symlink rejection.
 - Sender address display, multi-adapter source selection, two-file batches,
-  completion before SendFile returns, cancellation before session creation returns,
+  completion before SendFile returns, cancellation/shutdown before session creation returns,
   incoming-approval cancellation and retry after a receiver-registration conflict.
 - Suspend state cannot be undone by a screensaver unlock signal; newer lock signals
   win over delayed state queries. Shutdown cancels a pending Pair call.
 - Exact audio-card address matching, filename bounds and Unicode format-control removal.
+- Preferences save/load, malformed-value defaults, file permissions and opt-in autostart.
 
 The fake BlueZ service runs on a private test bus and never uses a real adapter.
 CI builds on Debian trixie and runs AddressSanitizer/UndefinedBehaviorSanitizer.
