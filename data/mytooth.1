@@ -1,4 +1,4 @@
-.TH MYTOOTH 1 "September 2026" "Mytooth 0.1.0"
+.TH MYTOOTH 1 "October 2026" "Mytooth 0.1.0"
 .SH NAME
 mytooth \- Bluetooth manager for Cinnamon Wayland
 .SH SYNOPSIS
@@ -10,7 +10,8 @@ mytooth \- Bluetooth manager for Cinnamon Wayland
 .SH DESCRIPTION
 Mytooth manages BlueZ adapters, discovery, pairing, devices, OBEX file transfer,
 audio profiles, PAN client tethering and battery information.
-It runs as the logged-in user and requires GTK 3, libxapp, BlueZ and a native Wayland session.
+It runs as the logged-in user and requires GTK 3, libxapp and BlueZ.
+Cinnamon on Wayland is the release target; GTK's normal X11 backend is also usable.
 Closing the window retains the tray and pairing agent when a native XApp tray host is available.
 Quit ends Mytooth without powering off adapters or disconnecting devices.
 .SH OPTIONS
@@ -50,6 +51,9 @@ write or rotate its own log files and does not require root privileges.
 Incoming requests require Mytooth to be the default BlueZ agent. Pairing is
 paused while Cinnamon reports an active screensaver, or its status is unknown.
 Avoid running another Bluetooth pairing agent at the same time.
+Only one OBEX receiving agent may be registered. After stopping a competing file
+receiver, choose Retry file receiver in the menu; Mytooth need not be restarted.
+Incoming approval dialogs show the sender address when BlueZ reports it.
 The BlueZ OBEX service handles file transfer. PipeWire-Pulse or PulseAudio handles
 audio profiles, while NetworkManager activates and configures PAN connections.
 Mytooth does not host a PAN network or alter bridge and firewall policy.

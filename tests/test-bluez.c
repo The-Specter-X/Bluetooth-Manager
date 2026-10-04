@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "agent.h"
+#include "session.h"
 
 #define ADAPTER "/org/bluez/hci0"
 #define DEVICE ADAPTER "/dev_AA_BB_CC_DD_EE_FF"
@@ -36,6 +37,11 @@ typedef struct {
     guint errors;
     guint pan_activations;
     guint pan_disconnections;
+    Session *session;
+    GDBusNodeInfo *session_info;
+    GDBusMethodInvocation *pending_active;
+    gboolean hold_active;
+    guint active_queries;
 } Fixture;
 
 static const char xml[] =
@@ -158,6 +164,15 @@ service_call(GDBusConnection *connection, const char *sender, const char *path,
              GDBusMethodInvocation *invocation, gpointer data)
 {
     Fixture *f = data;
+    if (g_str_equal(method, "GetActive")) {
+        f->active_queries++;
+        if (f->hold_active) {
+            f->pending_active = g_object_ref(invocation);
+            return;
+        }
+        g_dbus_method_invocation_return_value(invocation, g_variant_new("(b)", FALSE));
+        return;
+    }
     if (g_str_equal(interface, NM_MANAGER) && g_str_equal(method, "GetAllDevices")) {
         const char *devices[] = { NM_DEVICE_PATH, NULL };
         g_dbus_method_invocation_return_value(invocation, g_variant_new("(^ao)", devices));
@@ -386,6 +401,11 @@ setup(Fixture *f, gconstpointer data)
 static void
 teardown(Fixture *f, gconstpointer data)
 {
+    session_free(f->session);
+    if (f->pending_active) {
+        g_dbus_method_invocation_return_value(f->pending_active, g_variant_new("(b)", FALSE));
+        g_clear_object(&f->pending_active);
+    }
     bt_agent_stop(f->agent);
     bt_client_stop(f->client);
     if (f->pending_pair) {
@@ -408,6 +428,7 @@ teardown(Fixture *f, gconstpointer data)
     g_object_unref(f->service);
     g_dbus_node_info_unref(f->info);
     g_dbus_node_info_unref(f->nm_info);
+    g_clear_pointer(&f->session_info, g_dbus_node_info_unref);
     g_hash_table_unref(f->adapter);
     g_hash_table_unref(f->device);
     g_hash_table_unref(f->battery);
@@ -474,6 +495,76 @@ test_cancel(Fixture *f, gconstpointer data)
     bt_client_method(f->client, DEVICE, BT_DEVICE, "CancelPairing", NULL);
     iterate_until(idle, f);
     g_assert_null(f->pending_pair);
+}
+
+static void
+test_stop_pairing(Fixture *f, gconstpointer data)
+{
+    f->hold_pair = TRUE;
+    bt_client_method(f->client, DEVICE, BT_DEVICE, "Pair", NULL);
+    iterate_until(pairing, f);
+    bt_client_stop(f->client);
+    gint64 deadline = g_get_monotonic_time() + 5 * G_TIME_SPAN_SECOND;
+    while (f->pending_pair && g_get_monotonic_time() < deadline) {
+        while (g_main_context_iteration(NULL, FALSE)) {}
+        g_usleep(1000);
+    }
+    g_assert_null(f->pending_pair);
+}
+
+static gboolean session_unlocked(Fixture *f) { return f->active_queries && !bt_agent_locked(f->agent); }
+static gboolean session_locked(Fixture *f) { return bt_agent_locked(f->agent); }
+static gboolean active_pending(Fixture *f) { return f->pending_active != NULL; }
+
+static void
+test_suspend_lock_guard(Fixture *f, gconstpointer data)
+{
+    const char *xml_session =
+        "<node><interface name='org.cinnamon.ScreenSaver'>"
+        "<method name='GetActive'><arg type='b' direction='out'/></method>"
+        "<signal name='ActiveChanged'><arg type='b'/></signal></interface>"
+        "<interface name='org.freedesktop.login1.Manager'>"
+        "<signal name='PrepareForSleep'><arg type='b'/></signal></interface></node>";
+    f->session_info = g_dbus_node_info_new_for_xml(xml_session, NULL);
+    g_assert_cmpuint(g_dbus_connection_register_object(f->service, "/org/cinnamon/ScreenSaver",
+        f->session_info->interfaces[0], &vtable, f, NULL, NULL), >, 0);
+    g_assert_cmpuint(g_dbus_connection_register_object(f->service, "/org/freedesktop/login1",
+        f->session_info->interfaces[1], &vtable, f, NULL, NULL), >, 0);
+    own_service(f, "org.cinnamon.ScreenSaver", TRUE);
+    own_service(f, "org.freedesktop.login1", TRUE);
+    f->session = session_new(f->connection, f->client, f->agent);
+    iterate_until(session_unlocked, f);
+    f->hold_pair = TRUE;
+    bt_client_method(f->client, DEVICE, BT_DEVICE, "Pair", NULL);
+    iterate_until(pairing, f);
+    g_dbus_connection_emit_signal(f->service, NULL, "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager", "PrepareForSleep", g_variant_new("(b)", TRUE), NULL);
+    iterate_until(session_locked, f);
+    iterate_until(idle, f);
+    g_assert_null(f->pending_pair);
+    /* An unlock signal must not undo the separate suspend guard. */
+    g_dbus_connection_emit_signal(f->service, NULL, "/org/cinnamon/ScreenSaver",
+        "org.cinnamon.ScreenSaver", "ActiveChanged", g_variant_new("(b)", FALSE), NULL);
+    for (guint i = 0; i < 30; i++) {
+        while (g_main_context_iteration(NULL, FALSE)) {}
+        g_usleep(1000);
+    }
+    g_assert_true(bt_agent_locked(f->agent));
+    f->hold_active = TRUE;
+    g_dbus_connection_emit_signal(f->service, NULL, "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager", "PrepareForSleep", g_variant_new("(b)", FALSE), NULL);
+    iterate_until(active_pending, f);
+    g_assert_true(bt_agent_locked(f->agent));
+    /* A newer lock signal also wins over an old GetActive reply. */
+    g_dbus_connection_emit_signal(f->service, NULL, "/org/cinnamon/ScreenSaver",
+        "org.cinnamon.ScreenSaver", "ActiveChanged", g_variant_new("(b)", TRUE), NULL);
+    g_dbus_method_invocation_return_value(f->pending_active, g_variant_new("(b)", FALSE));
+    g_clear_object(&f->pending_active);
+    for (guint i = 0; i < 30; i++) {
+        while (g_main_context_iteration(NULL, FALSE)) {}
+        g_usleep(1000);
+    }
+    g_assert_true(bt_agent_locked(f->agent));
 }
 
 static void
@@ -656,6 +747,8 @@ main(int argc, char **argv)
     g_test_add("/bluez/model", Fixture, NULL, setup, test_model, teardown);
     g_test_add("/bluez/restart-pending-operation", Fixture, NULL, setup, test_restart, teardown);
     g_test_add("/bluez/cancel-pairing", Fixture, NULL, setup, test_cancel, teardown);
+    g_test_add("/bluez/stop-cancels-pairing", Fixture, NULL, setup, test_stop_pairing, teardown);
+    g_test_add("/session/suspend-and-stale-lock-query", Fixture, NULL, setup, test_suspend_lock_guard, teardown);
     g_test_add("/bluez/scan-start-stop-race", Fixture, NULL, setup, test_scan_race, teardown);
     g_test_add("/bluez/hotplug", Fixture, NULL, setup, test_hotplug, teardown);
     g_test_add("/bluez/visibility-timeout", Fixture, NULL, setup, test_visibility, teardown);

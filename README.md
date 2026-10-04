@@ -39,7 +39,8 @@ stack; Mytooth does not run a reconnect loop.
 
 Mytooth implements PAN client tethering, not local NAP hosting. Hosting would need
 privileged bridge/firewall policy and is intentionally deferred instead of adding a
-root helper. Debian packaging remains the next roadmap step.
+root helper. Debian binary packaging is available for target testing; physical
+hardware acceptance and distro integration are still required before release.
 
 ## Build
 
@@ -74,8 +75,30 @@ sudo meson install -C build
 
 This does not enable startup, remove Blueman, change system policy or modify
 Bluetooth configuration. Stop the competing Blueman applet before testing Mytooth
-as the default pairing and file-receiving agent. Distribution replacement and
-packaging are a later step.
+as the default pairing and file-receiving agent. Distribution replacement remains
+an explicit deployment step.
+
+If a competing receiver occupied the OBEX agent slot at startup, stop that applet
+and choose **Retry file receiver** from Mytooth's menu. Receiver availability stays
+visible below the device list; file sending does not require ownership of the
+receiving-agent slot. Transfers use the adapter associated with the chosen device.
+
+## Debian package for VM testing
+
+From a fresh clone on LMDE/Debian:
+
+```sh
+sudo apt install build-essential debhelper meson ninja-build pkg-config libgtk-3-dev libxapp-dev libglib2.0-dev libpulse-dev dbus-daemon
+dpkg-buildpackage --build=binary --no-sign
+sudo apt install ../mytooth_0.1.0-1_amd64.deb
+```
+
+Adjust the architecture suffix when not building on amd64. CI also uploads the
+binary package as `mytooth-debian-packages`; this is a development build, not a
+published hardware-certified release. The package does not remove Blueman or
+enable autostart. No custom system service, privileged helper or policy is installed.
+The packaging uses Debian's ordinary Meson/debhelper workflow; source uploads with
+the quilt format need an upstream orig tarball, unlike the binary-only command above.
 
 ## Running
 
@@ -120,11 +143,16 @@ removes path separators and control characters from remote names, and chooses a 
 name instead of overwriting an existing file. It never opens a received file
 automatically.
 
+Approval dialogs show the sender address reported by BlueZ (or explicitly unknown
+when unavailable). This identifies the peer; it is not proof that a file is safe.
+
 ## Development
 
 See [architecture](docs/architecture.md), [validation](docs/validation.md), and
 [the roadmap](docs/roadmap.md). Dedicated accessibility features and testing are
 deferred; standard GTK behavior and required dependencies are retained.
+See [the project review](docs/review.md) for the comparison with Blueman,
+BlueDevil and GNOME Bluetooth, fixes, deliberate exclusions and remaining risks.
 
 ```sh
 meson setup build-sanitize -Db_sanitize=address,undefined -Db_lundef=false --werror

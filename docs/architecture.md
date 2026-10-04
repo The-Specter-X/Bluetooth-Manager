@@ -74,7 +74,21 @@ is used over its standard D-Bus API without adding a second client-side object m
 
 XApp is Mint's tray protocol; it is not a Wayland core protocol. BlueZ D-Bus,
 freedesktop desktop entries/notifications and kernel rfkill are used as documented.
-GDK is restricted to its Wayland backend; Mytooth does not contain an X11 fallback.
+GTK selects the session's ordinary display backend. Wayland is the release target;
+there is no custom X11 code and no deliberate rejection of GTK's X11 backend.
+
+The file chooser captures its device path and closes with its details dialog.
+Outgoing OBEX sessions supply BlueZ's `Source` option for that device's adapter.
+After an outgoing transfer is created, a one-shot property query closes the gap
+where an early completion signal could precede the method reply. It is not polling.
+Incoming prompts query the OBEX session's peer address and show it to the user;
+failure to identify the peer remains explicit. Cancellation clears both the pending
+approval invocation and transfer state.
+
+Suspend state is tracked independently of screensaver state, so a screensaver
+unlock signal during suspend cannot re-enable pairing. Lock/suspend and shutdown
+cancel pending Pair calls even before an Agent1 prompt has arrived. Registration
+retries are serialized; competing OBEX receivers are never forcibly replaced.
 
 ## Upstream references
 

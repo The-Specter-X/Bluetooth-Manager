@@ -79,6 +79,41 @@ test_receive_path(void)
 }
 
 static void
+test_audio_address(void)
+{
+    const char *address = "AA:BB:CC:DD:EE:FF";
+    g_assert_true(bt_address_matches("bluez_card.aa_bb_cc_dd_ee_ff", address));
+    g_assert_true(bt_address_matches("/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF", address));
+    g_assert_true(bt_address_matches("bluez_card.AABBCCDDEEFF", address));
+    g_assert_false(bt_address_matches("AA BB CC DD EE FF", address));
+    g_assert_false(bt_address_matches("1AABBCCDDEEFF0", address));
+    g_assert_false(bt_address_matches("AA:BB:CC:DD:EE:00", address));
+    g_assert_false(bt_address_matches("AABB", "AA"));
+    g_assert_false(bt_address_matches(NULL, address));
+}
+
+static void
+test_receive_name_bounds(void)
+{
+    g_autoptr(GError) error = NULL;
+    g_autofree char *root = g_dir_make_tmp("mytooth-name-XXXXXX", &error);
+    g_assert_no_error(error);
+    g_autofree char *path = obex_safe_receive_path(root, "photo\342\200\256gpj.exe", &error);
+    g_assert_no_error(error);
+    g_autofree char *name = g_path_get_basename(path);
+    g_assert_cmpstr(name, ==, "photogpj.exe");
+    g_autofree char *long_name = g_strnfill(500, 'a');
+    g_autofree char *long_path = obex_safe_receive_path(root, long_name, &error);
+    g_assert_no_error(error);
+    g_autofree char *base = g_path_get_basename(long_path);
+    g_assert_cmpuint(strlen(base), <=, 200);
+    g_autofree char *bad = obex_safe_receive_path("relative", "name", &error);
+    g_assert_null(bad);
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+    g_assert_cmpint(g_rmdir(root), ==, 0);
+}
+
+static void
 test_receive_symlink(void)
 {
     g_autoptr(GError) error = NULL;
@@ -102,6 +137,8 @@ main(int argc, char **argv)
     g_test_init(&argc, &argv, NULL);
     g_test_add_func("/input/pin", test_pin);
     g_test_add_func("/input/passkey", test_passkey);
+    g_test_add_func("/audio/address-matching", test_audio_address);
+    g_test_add_func("/obex/name-bounds-and-format-controls", test_receive_name_bounds);
     g_test_add_func("/errors/redaction", test_errors);
     g_test_add_func("/obex/safe-receive-path", test_receive_path);
     g_test_add_func("/obex/reject-symlink-directory", test_receive_symlink);

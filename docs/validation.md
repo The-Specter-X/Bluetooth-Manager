@@ -16,6 +16,12 @@
 - PAN capability/state from BlueZ and volatile NetworkManager activation/disconnection.
 - OBEX sending, cancellation, incoming approval, lock rejection and spoofed callers.
 - Incoming filename traversal, collision handling, private permissions and symlink rejection.
+- Sender address display, multi-adapter source selection, two-file batches,
+  completion before SendFile returns, cancellation before session creation returns,
+  incoming-approval cancellation and retry after a receiver-registration conflict.
+- Suspend state cannot be undone by a screensaver unlock signal; newer lock signals
+  win over delayed state queries. Shutdown cancels a pending Pair call.
+- Exact audio-card address matching, filename bounds and Unicode format-control removal.
 
 The fake BlueZ service runs on a private test bus and never uses a real adapter.
 CI builds on Debian trixie and runs AddressSanitizer/UndefinedBehaviorSanitizer.
@@ -25,11 +31,14 @@ has no input seat or native XApp host, so the harness excludes only GTK 3's
 corresponding, exact `gdk_seat_get_keyboard` and fallback-icon scale diagnostics;
 every other critical remains a failure. Native XApp host behavior is intentionally
 left to the Cinnamon target checklist.
+CI also checks a visible X11 window under Xvfb, without a Wayland display, so the
+normal GTK transition backend does not regress. X11 is not the distro's release
+session. A Debian binary package is built with debhelper and uploaded as a CI artifact.
 See the GitHub Actions results for the status of each commit.
 
-The editing environment cannot open Unix sockets, so local D-Bus and compositor
-execution is unavailable there. This limitation must not be mistaken for passing
-integration tests; CI results and target QA are the evidence.
+Some editing environments cannot install dependencies or open Unix sockets.
+These limitations must not be mistaken for passing integration tests; CI results
+and target QA are the evidence.
 
 ## Required target acceptance before shipping
 
@@ -51,6 +60,9 @@ Do not infer native tray menu support from libxapp's compile-time minimum alone.
       switch every offered high-quality/headset profile and test its microphone.
 - [ ] Send multiple small and large files; cancel while creating the OBEX session and
       during transfer; unplug the adapter and restart `obexd` mid-transfer.
+- [ ] Two adapters with the same remote device: sending uses the chosen device's adapter.
+- [ ] Closing/reopening device details while a file chooser is open cannot retarget a send.
+- [ ] Stop Blueman after Mytooth starts, then retry the file receiver without restarting Mytooth.
 - [ ] Receive files with Unicode, separators, duplicate names and missing size;
       approve/reject/timeout/lock cases never overwrite or escape Downloads/Bluetooth.
 - [ ] PAN tether to Android and iOS NAP devices; NetworkManager obtains addressing,
@@ -65,6 +77,8 @@ Do not infer native tray menu support from libxapp's compile-time minimum alone.
 - [ ] Close/quit during a pairing operation releases prompts and scanning without
       powering off the adapter or disconnecting already-connected devices.
 - [ ] Log and configuration permissions work as an ordinary user.
+- [ ] Install/upgrade/remove the `.deb` on a clean VM. User settings and received
+      files remain after removal; no competing applet is silently removed or enabled.
 
 ## Scope limits to verify during review
 
