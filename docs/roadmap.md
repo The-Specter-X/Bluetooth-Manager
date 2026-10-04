@@ -16,7 +16,8 @@ acceptance gates remain open until tested on the distro and physical hardware.
 6. **File transfer:** OBEX file sending/receiving with approval, cancellation and safe paths.
 7. **Audio and tethering:** audio-profile selection through PulseAudio/PipeWire and
    PAN client tethering through BlueZ Network1 and NetworkManager.
-8. **Next — release integration:** Debian packaging, translations, upgrade handling,
+8. **Release integration in progress:** Debian binary packaging implemented for
+   VM testing; translations, upgrade acceptance,
    distro defaults and conflict-free replacement of Blueman startup.
 
 Dedicated accessibility work is deferred by project decision. Keep normal GTK

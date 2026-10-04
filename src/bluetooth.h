@@ -10,6 +10,7 @@ G_DECLARE_FINAL_TYPE(BtClient, bt_client, BT, CLIENT, GObject)
  * Caller owns returned arrays/proxies. Array elements are owned by the array. */
 BtClient *bt_client_new(GDBusConnection *connection);
 void bt_client_stop(BtClient *self);
+void bt_client_cancel_pairing(BtClient *self);
 GDBusConnection *bt_client_connection(BtClient *self); /* borrowed */
 const char *bt_client_owner(BtClient *self); /* borrowed; NULL while unavailable */
 GPtrArray *bt_client_list(BtClient *self, const char *interface);

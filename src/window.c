@@ -12,7 +12,6 @@ typedef struct {
     GtkWidget *icon;
     GtkWidget *action;
     GtkWidget *details;
-    guint order;
     gboolean saved;
     gboolean present;
 } DeviceRow;
@@ -31,8 +30,8 @@ struct View {
     GtkWidget *error_bar;
     GtkWidget *error_text;
     GtkWidget *agent_status;
+    GtkWidget *receiver_status;
     GHashTable *rows;
-    guint next_order;
     gboolean updating;
     gboolean add_mode;
     char *filter;
@@ -40,7 +39,6 @@ struct View {
     GtkWidget *pair_text;
     GtkWidget *pair_entry;
     GtkWidget *pair_error;
-    BtPrompt pair_kind;
     GtkWidget *details;
     char *detail_path;
     GtkWidget *detail_info;
@@ -57,6 +55,7 @@ struct View {
     GtkWidget *detail_audio_status;
     GtkWidget *detail_audio_combo;
     GtkFileChooserNative *file_chooser;
+    char *file_device_path;
     GtkWidget *obex_prompt_dialog;
     GtkWidget *obex_prompt_text;
     GtkWidget *transfer_dialog;
@@ -188,6 +187,12 @@ static void
 detail_closed(GtkWidget *widget, gpointer data)
 {
     View *view = data;
+    if (view->file_chooser) {
+        g_signal_handlers_disconnect_by_data(view->file_chooser, view);
+        gtk_native_dialog_destroy(GTK_NATIVE_DIALOG(view->file_chooser));
+        g_clear_object(&view->file_chooser);
+    }
+    g_clear_pointer(&view->file_device_path, g_free);
     view->details = NULL;
     g_clear_pointer(&view->detail_path, g_free);
 }
@@ -247,17 +252,22 @@ static void
 file_chosen(GtkNativeDialog *dialog, gint response, gpointer data)
 {
     View *view = data;
-    if (response == GTK_RESPONSE_ACCEPT && !view->app->closing && view->detail_path) {
+    g_autofree char *device_path = g_steal_pointer(&view->file_device_path);
+    if (response == GTK_RESPONSE_ACCEPT && !view->app->closing && device_path) {
         GSList *selected = gtk_file_chooser_get_filenames(GTK_FILE_CHOOSER(dialog));
         g_autoptr(GPtrArray) paths = g_ptr_array_new_with_free_func(g_free);
         for (GSList *item = selected; item; item = item->next)
             g_ptr_array_add(paths, item->data);
         g_slist_free(selected);
         g_autoptr(GDBusProxy) device = bt_client_proxy(view->app->client,
-            view->detail_path, BT_DEVICE);
+            device_path, BT_DEVICE);
         g_autofree char *address = bt_string(device, "Address", "");
+        g_autofree char *adapter_path = bt_string(device, "Adapter", "");
+        g_autoptr(GDBusProxy) adapter = bt_client_proxy(view->app->client,
+            adapter_path, BT_ADAPTER);
+        g_autofree char *source = bt_string(adapter, "Address", "");
         g_autoptr(GError) error = NULL;
-        if (!device || !obex_client_send(view->app->obex, address, paths, &error))
+        if (!device || !adapter || !obex_client_send(view->app->obex, address, source, paths, &error))
             app_error(view->app, error ? error->message : "This device is no longer available.");
     }
     view->file_chooser = NULL;
@@ -270,6 +280,7 @@ send_files(GtkButton *widget, gpointer data)
     View *view = data;
     if (view->file_chooser)
         return;
+    view->file_device_path = g_strdup(view->detail_path);
     view->file_chooser = gtk_file_chooser_native_new("Send Files over Bluetooth",
         GTK_WINDOW(view->details), GTK_FILE_CHOOSER_ACTION_OPEN, "Send", "Cancel");
     gtk_file_chooser_set_select_multiple(GTK_FILE_CHOOSER(view->file_chooser), TRUE);
@@ -487,7 +498,6 @@ row_new(View *view, GDBusProxy *device)
     row->view = view;
     row->path = g_strdup(g_dbus_proxy_get_object_path(device));
     row->search = g_strdup("");
-    row->order = view->next_order++;
     row->row = gtk_list_box_row_new();
     g_object_set_data(G_OBJECT(row->row), "device-row", row);
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 14);
@@ -590,9 +600,10 @@ autostart_toggled(GtkCheckMenuItem *item, gpointer data)
 }
 
 static void retry_agent(GtkMenuItem *item, gpointer data) { App *app = data; if (app->agent) bt_agent_retry(app->agent); }
+static void retry_receiver(GtkMenuItem *item, gpointer data) { App *app = data; if (app->obex) obex_client_retry(app->obex); }
 static void quit_clicked(GtkMenuItem *item, gpointer data) { app_quit(data); }
 
-typedef struct { View *view; char *path; GtkWidget *name; GtkWidget *visible; } AdapterDialog;
+typedef struct { View *view; char *path; GtkWidget *name; } AdapterDialog;
 
 static void
 adapter_dialog_free(gpointer data)
@@ -658,6 +669,7 @@ make_menu(View *view)
     GtkWidget *notifications = gtk_check_menu_item_new_with_label("Show notifications");
     GtkWidget *autostart = gtk_check_menu_item_new_with_label("Start at login");
     GtkWidget *retry = gtk_menu_item_new_with_label("Retry pairing agent");
+    GtkWidget *retry_files = gtk_menu_item_new_with_label("Retry file receiver");
     GtkWidget *quit = gtk_menu_item_new_with_label("Quit Mytooth");
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(notifications), view->app->settings.notifications);
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(autostart), settings_autostart());
@@ -665,11 +677,13 @@ make_menu(View *view)
     g_signal_connect(notifications, "toggled", G_CALLBACK(notifications_toggled), view);
     g_signal_connect(autostart, "toggled", G_CALLBACK(autostart_toggled), view);
     g_signal_connect(retry, "activate", G_CALLBACK(retry_agent), view->app);
+    g_signal_connect(retry_files, "activate", G_CALLBACK(retry_receiver), view->app);
     g_signal_connect(quit, "activate", G_CALLBACK(quit_clicked), view->app);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), adapter);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), notifications);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), autostart);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), retry);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), retry_files);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), quit);
     gtk_widget_show_all(menu);
@@ -750,6 +764,9 @@ view_new(App *app)
     view->agent_status = label("", "dim-label");
     gtk_label_set_line_wrap(GTK_LABEL(view->agent_status), TRUE);
     gtk_box_pack_start(GTK_BOX(content), view->agent_status, FALSE, FALSE, 0);
+    view->receiver_status = label("", "dim-label");
+    gtk_label_set_line_wrap(GTK_LABEL(view->receiver_status), TRUE);
+    gtk_box_pack_start(GTK_BOX(content), view->receiver_status, FALSE, FALSE, 0);
     g_autoptr(GtkCssProvider) css = gtk_css_provider_new();
     gtk_css_provider_load_from_data(css,
         ".title { font-size: 18px; font-weight: bold; } .heading { font-weight: bold; }", -1, NULL);
@@ -804,6 +821,12 @@ view_refresh(View *view)
         scanning ? "Scanning stops automatically after 30 seconds." :
         "Closing this window keeps Mytooth in the tray when a native tray host is available.";
     gtk_label_set_text(GTK_LABEL(view->agent_status), agent_text);
+    const char *receiver_text = !app->obex || !obex_client_available(app->obex) ?
+        "File transfer service is unavailable. Check that bluez-obexd is installed." :
+        !obex_client_ready(app->obex) ?
+        "File receiver is not ready. Stop any competing receiver, then use Retry file receiver." :
+        "Incoming files require approval and are saved in Downloads/Bluetooth.";
+    gtk_label_set_text(GTK_LABEL(view->receiver_status), receiver_text);
     view->updating = FALSE;
     GHashTableIter iter;
     gpointer value;
@@ -885,8 +908,8 @@ view_obex_prompt(View *view)
     const char *name = obex_client_prompt_name(view->app->obex);
     guint64 size = obex_client_prompt_size(view->app->obex);
     g_autofree char *size_text = size ? g_format_size(size) : g_strdup("Size not reported");
-    g_autofree char *text = g_strdup_printf("A nearby Bluetooth device wants to send:\n\n%s\n%s",
-        name ? name : "Bluetooth file", size_text);
+    g_autofree char *text = g_strdup_printf("Bluetooth sender: %s\n\n%s\n%s",
+        obex_client_prompt_sender(view->app->obex), name ? name : "Bluetooth file", size_text);
     gtk_label_set_text(GTK_LABEL(view->obex_prompt_text), text);
 }
 
@@ -910,7 +933,7 @@ view_obex_transfer(View *view)
     if (!view || !view->app->obex)
         return;
     gboolean visible = obex_client_busy(view->app->obex) &&
-        !obex_client_has_prompt(view->app->obex);
+        !obex_client_awaiting_approval(view->app->obex);
     if (!visible) {
         if (view->transfer_dialog)
             gtk_widget_destroy(view->transfer_dialog);
@@ -977,7 +1000,6 @@ view_pairing(View *view)
         if (view->pair_dialog)
             gtk_widget_destroy(view->pair_dialog);
         view->pair_dialog = NULL;
-        view->pair_kind = BT_PROMPT_NONE;
         return;
     }
     if (!view->pair_dialog) {
@@ -1004,7 +1026,6 @@ view_pairing(View *view)
         view->pair_error = label("", "error");
         gtk_label_set_line_wrap(GTK_LABEL(view->pair_error), TRUE);
         gtk_box_pack_start(GTK_BOX(box), view->pair_error, FALSE, FALSE, 0);
-        view->pair_kind = kind;
         gtk_widget_show_all(view->pair_dialog);
         gtk_widget_set_visible(view->pair_entry, kind == BT_PROMPT_PIN || kind == BT_PROMPT_PASSKEY);
         gtk_widget_hide(view->pair_error);
@@ -1023,6 +1044,7 @@ view_free(View *view)
     if (!view)
         return;
     if (view->file_chooser) {
+        g_signal_handlers_disconnect_by_data(view->file_chooser, view);
         gtk_native_dialog_destroy(GTK_NATIVE_DIALOG(view->file_chooser));
         g_clear_object(&view->file_chooser);
     }
@@ -1030,5 +1052,6 @@ view_free(View *view)
     gtk_widget_destroy(view->window);
     g_free(view->filter);
     g_free(view->detail_path);
+    g_free(view->file_device_path);
     g_free(view);
 }

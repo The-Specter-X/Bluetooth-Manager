@@ -2,6 +2,34 @@
 #include "util.h"
 #include <string.h>
 
+gboolean
+bt_address_matches(const char *candidate, const char *address)
+{
+    if (!candidate || !address || strlen(address) != 17)
+        return FALSE;
+    for (guint i = 0; i < 17; i++)
+        if (i % 3 == 2 ? address[i] != ':' : !g_ascii_isxdigit(address[i]))
+            return FALSE;
+    for (const char *p = candidate; *p; p++) {
+        if (p != candidate && g_ascii_isxdigit(p[-1]))
+            continue;
+        const char *q = p;
+        guint byte;
+        for (byte = 0; byte < 6; byte++) {
+            if (!q[0] || !q[1] ||
+                g_ascii_toupper(q[0]) != g_ascii_toupper(address[byte * 3]) ||
+                g_ascii_toupper(q[1]) != g_ascii_toupper(address[byte * 3 + 1]))
+                break;
+            q += 2;
+            if (byte < 5 && (*q == ':' || *q == '_' || *q == '-'))
+                q++;
+        }
+        if (byte == 6 && !g_ascii_isxdigit(*q))
+            return TRUE;
+    }
+    return FALSE;
+}
+
 char *
 bt_string(GDBusProxy *proxy, const char *property, const char *fallback)
 {

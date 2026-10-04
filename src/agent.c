@@ -30,6 +30,7 @@ struct _BtAgent {
     guint timeout;
     guint generation;
     gboolean ready;
+    gboolean registering;
     gboolean is_default;
     gboolean locked;
     gboolean stopped;
@@ -193,6 +194,7 @@ registered(GObject *source, GAsyncResult *result, gpointer data)
     g_autoptr(GError) error = NULL;
     g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
     if (!self->stopped && request->generation == self->generation) {
+        self->registering = FALSE;
         if (request->make_default)
             self->is_default = reply != NULL;
         else
@@ -212,6 +214,9 @@ registered(GObject *source, GAsyncResult *result, gpointer data)
 static void
 register_call(BtAgent *self, gboolean make_default)
 {
+    if (self->registering)
+        return;
+    self->registering = TRUE;
     Registration *request = g_new0(Registration, 1);
     request->agent = g_object_ref(self);
     request->generation = self->generation;
@@ -243,6 +248,7 @@ client_changed(BtClient *client, gpointer data)
         g_free(self->owner);
         self->owner = g_strdup(owner);
         self->ready = FALSE;
+        self->registering = FALSE;
         self->is_default = FALSE;
         if (owner && self->registration)
             register_call(self, FALSE);
@@ -285,6 +291,8 @@ void
 bt_agent_set_locked(BtAgent *self, gboolean locked)
 {
     self->locked = locked;
+    if (locked)
+        bt_client_cancel_pairing(self->client);
     if (locked && self->prompt != BT_PROMPT_NONE)
         bt_agent_answer(self, FALSE, NULL);
     g_signal_emit(self, signals[CHANGED], 0);

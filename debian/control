@@ -1,0 +1,30 @@
+Source: mytooth
+Section: utils
+Priority: optional
+Maintainer: The Specter <thespecter@tuta.com>
+Build-Depends: debhelper-compat (= 13),
+               meson (>= 0.61),
+               ninja-build,
+               pkg-config,
+               libgtk-3-dev (>= 3.24),
+               libxapp-dev (>= 2.0),
+               libglib2.0-dev (>= 2.66),
+               libpulse-dev (>= 13.0),
+               dbus-daemon <!nocheck>
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/The-Specter-X/Bluetooth-Manager
+Vcs-Git: https://github.com/The-Specter-X/Bluetooth-Manager.git
+Vcs-Browser: https://github.com/The-Specter-X/Bluetooth-Manager
+
+Package: mytooth
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, bluez, bluez-obexd
+Recommends: network-manager, pipewire-pulse, wireplumber
+Description: Bluetooth manager for Cinnamon using GTK and XApp
+ Mytooth manages Bluetooth adapters, pairing and connections through BlueZ.
+ It provides an XApp tray, incoming file approval and outgoing OBEX transfers,
+ Bluetooth audio profile selection, and NetworkManager-backed PAN tethering.
+ .
+ Cinnamon on Wayland is the intended release environment. GTK's normal X11
+ backend remains usable for development and transition testing.

@@ -15,3 +15,5 @@ int bt_battery(GDBusProxy *proxy);
 char *bt_error_message(const GError *error);
 gboolean bt_valid_pin(const char *text);
 gboolean bt_parse_passkey(const char *text, guint32 *value);
+/* Match a full address in PulseAudio/PipeWire card names or BlueZ paths. */
+gboolean bt_address_matches(const char *candidate, const char *address);

@@ -4,6 +4,7 @@
 No X server or physical Bluetooth adapter is involved. This checks launch,
 app identity, hotplug/restart and single-instance exit.
 It does not establish Cinnamon panel menu placement or hardware compatibility.
+Pass 'x11' after the executable, under xvfb-run, for the transition smoke test.
 """
 import os
 from pathlib import Path
@@ -26,6 +27,8 @@ def wait_for(predicate, description, seconds=15):
 
 def main():
     binary = str(Path(sys.argv[1]).resolve())
+    backend = sys.argv[2] if len(sys.argv) > 2 else "wayland"
+    assert backend in ("wayland", "x11")
     logs = Path("build/smoke-logs")
     logs.mkdir(parents=True, exist_ok=True)
     processes = []
@@ -33,11 +36,14 @@ def main():
     with tempfile.TemporaryDirectory(prefix="mytooth-smoke-") as temp:
         env = os.environ.copy()
         env.update(XDG_RUNTIME_DIR=temp, XDG_CONFIG_HOME=f"{temp}/config",
-                   WAYLAND_DISPLAY="mytooth-test", GDK_BACKEND="wayland",
+                   WAYLAND_DISPLAY="mytooth-test", GDK_BACKEND=backend,
                    GSETTINGS_BACKEND="memory",
                    MYTOOTH_LOG_STDERR="1",
                    DBUS_SYSTEM_BUS_ADDRESS=os.environ["DBUS_SESSION_BUS_ADDRESS"])
-        env.pop("DISPLAY", None)
+        if backend == "wayland":
+            env.pop("DISPLAY", None)
+        else:
+            env.pop("WAYLAND_DISPLAY", None)
 
         def launch(args, filename, extra=None):
             output = (logs / filename).open("w")
@@ -49,10 +55,12 @@ def main():
 
         bus = dbus.SessionBus()
         try:
-            weston = launch(["weston", "--backend=headless-backend.so", "--renderer=pixman",
-                             "--socket=mytooth-test", "--idle-time=0",
-                             "--width=1024", "--height=768"], "weston.log")
-            wait_for(lambda: Path(temp, "mytooth-test").exists(), "Wayland socket")
+            weston = None
+            if backend == "wayland":
+                weston = launch(["weston", "--backend=headless-backend.so", "--renderer=pixman",
+                                 "--socket=mytooth-test", "--idle-time=0",
+                                 "--width=1024", "--height=768"], "weston.log")
+                wait_for(lambda: Path(temp, "mytooth-test").exists(), "Wayland socket")
             mock = launch(["/usr/bin/python3", "-m", "dbusmock", "--session", "-t", "bluez5"], "bluez.log")
             wait_for(lambda: bus.name_has_owner("org.bluez"), "mock BlueZ")
             root = bus.get_object("org.bluez", "/")
@@ -61,8 +69,12 @@ def main():
             api.AddDevice("hci0", "AA:BB:CC:DD:EE:FF", "<b>Headphones</b> 日本語")
             app = launch([binary, "--debug"], "mytooth.log", {"WAYLAND_DEBUG": "client"})
             wait_for(lambda: bus.name_has_owner("io.github.the_specter_x.Mytooth"), "Mytooth instance")
-            wait_for(lambda: 'set_app_id("io.github.the_specter_x.Mytooth")' in
-                     (logs / "mytooth.log").read_text(), "visible native Wayland window")
+            if backend == "wayland":
+                wait_for(lambda: 'set_app_id("io.github.the_specter_x.Mytooth")' in
+                         (logs / "mytooth.log").read_text(), "visible native Wayland window")
+            else:
+                wait_for(lambda: "Mytooth — Bluetooth" in subprocess.check_output(
+                    ["xwininfo", "-root", "-tree"], env=env, text=True), "visible X11 window")
             assert app.poll() is None, "Mytooth exited during startup"
             subprocess.run([binary], env=env, check=True, timeout=10)
             dbus.Interface(bus.get_object("org.bluez", "/org/bluez/hci0"),
@@ -89,8 +101,8 @@ def main():
                          "gtk_widget_get_scale_factor: assertion 'GTK_IS_WIDGET (widget)' failed" not in line]
             assert not criticals, "\n".join(criticals)
             assert "Gtk-WARNING" not in output, output
-            assert weston.poll() is None
-            print("PASS: native Wayland identity, hotplug, service restart, single instance and quit")
+            assert weston is None or weston.poll() is None
+            print(f"PASS: {backend} window, hotplug, service restart, single instance and quit")
         finally:
             for process in reversed(processes):
                 if process.poll() is None:

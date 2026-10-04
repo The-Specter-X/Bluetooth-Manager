@@ -29,6 +29,7 @@ state_changed(XAppStatusIcon *icon, XAppStatusIconState state, gpointer data)
     if (state == XAPP_STATUS_ICON_STATE_NATIVE)
         tray->had_host = TRUE;
     else if (tray->had_host && !tray->app->closing) {
+        tray->had_host = FALSE;
         app_show(tray->app);
         app_error(tray->app, "The XApp tray host disappeared. Mytooth has reopened its window.");
     }

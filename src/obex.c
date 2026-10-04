@@ -35,6 +35,7 @@ struct _ObexClient {
     char *name;
     char *status;
     char *prompt_name;
+    char *prompt_sender;
     char *receive_directory;
     guint watch;
     guint registration;
@@ -47,6 +48,7 @@ struct _ObexClient {
     guint64 size;
     guint64 prompt_size;
     gboolean ready;
+    gboolean registering;
     gboolean locked;
     gboolean incoming;
     gboolean stopped;
@@ -91,7 +93,8 @@ safe_name(const char *suggested)
     GString *clean = g_string_sized_new(MIN(strlen(base), 200));
     for (const char *p = base; *p && clean->len < 200; p = g_utf8_next_char(p)) {
         gunichar c = g_utf8_get_char(p);
-        if (c == '/' || c == '\\' || g_unichar_iscntrl(c))
+        if (c == '/' || c == '\\' || g_unichar_iscntrl(c) ||
+            g_unichar_type(c) == G_UNICODE_FORMAT)
             continue;
         char bytes[6];
         gint length = g_unichar_to_utf8(c, bytes);
@@ -109,7 +112,11 @@ safe_name(const char *suggested)
 char *
 obex_safe_receive_path(const char *directory, const char *suggested, GError **error)
 {
-    g_return_val_if_fail(directory != NULL, NULL);
+    if (!directory || !g_path_is_absolute(directory)) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                            "The Bluetooth download directory must be absolute");
+        return NULL;
+    }
     struct stat st;
     if (g_mkdir_with_parents(directory, 0700) != 0 && errno != EEXIST) {
         g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
@@ -164,6 +171,7 @@ clear_prompt(ObexClient *self, const char *error_name)
         g_clear_object(&self->invocation);
     }
     g_clear_pointer(&self->prompt_name, g_free);
+    g_clear_pointer(&self->prompt_sender, g_free);
     self->prompt_size = 0;
     if (!self->stopped)
         g_signal_emit(self, signals[PROMPT_CHANGED], 0);
@@ -275,7 +283,8 @@ properties_changed(GDBusConnection *bus, const char *sender, const char *path,
 {
     ObexClient *self = data;
     if (!self->owner || g_strcmp0(sender, self->owner) != 0 ||
-        g_strcmp0(path, self->transfer) != 0)
+        g_strcmp0(path, self->transfer) != 0 || self->invocation ||
+        !g_variant_is_of_type(parameters, G_VARIANT_TYPE("(sa{sv}as)")))
         return;
     const char *changed_interface;
     g_autoptr(GVariant) values = NULL;
@@ -293,6 +302,37 @@ request_free(Request *request)
     g_object_unref(request->client);
     g_free(request->path);
     g_free(request);
+}
+
+static void
+transfer_properties_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+    Request *request = data;
+    ObexClient *self = request->client;
+    g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, NULL);
+    if (!self->stopped && request->generation == self->generation &&
+        request->operation == self->operation &&
+        g_strcmp0(request->path, self->transfer) == 0 && reply) {
+        g_autoptr(GVariant) properties = NULL;
+        g_variant_get(reply, "(@a{sv})", &properties);
+        transfer_state(self, properties);
+    }
+    request_free(request);
+}
+
+static void
+query_transfer(ObexClient *self)
+{
+    Request *request = g_new0(Request, 1);
+    request->client = g_object_ref(self);
+    request->generation = self->generation;
+    request->operation = self->operation;
+    request->path = g_strdup(self->transfer);
+    /* Close the gap where a terminal signal arrived before SendFile's reply. */
+    g_dbus_connection_call(self->bus, self->owner, self->transfer,
+        "org.freedesktop.DBus.Properties", "GetAll", g_variant_new("(s)", OBEX_TRANSFER),
+        G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NO_AUTO_START, 5000,
+        self->cancel, transfer_properties_done, request);
 }
 
 static void
@@ -317,6 +357,8 @@ send_file_done(GObject *source, GAsyncResult *result, gpointer data)
             if (self->status && (g_str_equal(self->status, "complete") ||
                                  g_str_equal(self->status, "error")))
                 transfer_state(self, properties);
+            else
+                query_transfer(self);
         }
     }
     request_free(request);
@@ -349,8 +391,8 @@ session_created(GObject *source, GAsyncResult *result, gpointer data)
     ObexClient *self = request->client;
     g_autoptr(GError) error = NULL;
     g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
-    if (!self->stopped && request->generation == self->generation && reply &&
-        request->operation != self->operation) {
+    if (request->generation == self->generation && reply &&
+        (self->stopped || request->operation != self->operation)) {
         const char *path;
         g_variant_get(reply, "(&o)", &path);
         g_dbus_connection_call(self->bus, self->owner, OBEX_ROOT, OBEX_CLIENT_INTERFACE,
@@ -372,10 +414,11 @@ session_created(GObject *source, GAsyncResult *result, gpointer data)
 }
 
 gboolean
-obex_client_send(ObexClient *self, const char *address, GPtrArray *paths, GError **error)
+obex_client_send(ObexClient *self, const char *address, const char *source,
+                 GPtrArray *paths, GError **error)
 {
     g_return_val_if_fail(OBEX_IS_CLIENT(self), FALSE);
-    if (!self->owner) {
+    if (self->stopped || !self->owner) {
         g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
                             "The Bluetooth file-transfer service is unavailable");
         return FALSE;
@@ -385,7 +428,12 @@ obex_client_send(ObexClient *self, const char *address, GPtrArray *paths, GError
                             "Another Bluetooth file transfer is already active");
         return FALSE;
     }
-    if (!valid_address(address) || !paths || paths->len == 0 || paths->len > 64) {
+    if (!valid_address(address) || (source && !valid_address(source))) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                            "The Bluetooth device or adapter address is invalid");
+        return FALSE;
+    }
+    if (!paths || paths->len == 0 || paths->len > 64) {
         g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
                             "Choose between one and 64 files to send");
         return FALSE;
@@ -413,14 +461,17 @@ obex_client_send(ObexClient *self, const char *address, GPtrArray *paths, GError
     GVariantBuilder options;
     g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
     g_variant_builder_add(&options, "{sv}", "Target", g_variant_new_string("opp"));
+    if (source)
+        g_variant_builder_add(&options, "{sv}", "Source", g_variant_new_string(source));
     Request *request = g_new0(Request, 1);
     request->client = g_object_ref(self);
     request->generation = self->generation;
     request->operation = self->operation;
+    /* Keep the reply after cancellation so a late-created session can be removed. */
     g_dbus_connection_call(self->bus, self->owner, OBEX_ROOT, OBEX_CLIENT_INTERFACE,
         "CreateSession", g_variant_new("(s@a{sv})", address, g_variant_builder_end(&options)),
         G_VARIANT_TYPE("(o)"), G_DBUS_CALL_FLAGS_NO_AUTO_START, 30000,
-        self->cancel, session_created, request);
+        NULL, session_created, request);
     return TRUE;
 }
 
@@ -429,12 +480,34 @@ obex_client_cancel(ObexClient *self)
 {
     if (!obex_client_busy(self))
         return;
+    clear_prompt(self, "org.bluez.obex.Error.Canceled");
     if (self->owner && self->transfer)
         g_dbus_connection_call(self->bus, self->owner, self->transfer, OBEX_TRANSFER,
             "Cancel", NULL, NULL, G_DBUS_CALL_FLAGS_NO_AUTO_START, 5000, NULL, NULL, NULL);
     remove_session(self);
     self->operation++;
     reset_transfer(self);
+}
+
+static void
+incoming_session_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+    Request *request = data;
+    ObexClient *self = request->client;
+    g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, NULL);
+    if (!self->stopped && request->generation == self->generation &&
+        request->operation == self->operation && self->invocation &&
+        g_strcmp0(request->path, self->transfer) == 0) {
+        const char *address = NULL;
+        g_autoptr(GVariant) properties = NULL;
+        if (reply) {
+            g_variant_get(reply, "(@a{sv})", &properties);
+            g_variant_lookup(properties, "Destination", "&s", &address);
+        }
+        self->prompt_sender = g_strdup(valid_address(address) ? address : "Unknown sender");
+        g_signal_emit(self, signals[PROMPT_CHANGED], 0);
+    }
+    request_free(request);
 }
 
 static void
@@ -463,7 +536,21 @@ incoming_properties(GObject *source, GAsyncResult *result, gpointer data)
             self->prompt_name = safe_name(name);
             g_variant_lookup(properties, "Size", "t", &self->prompt_size);
             self->prompt_timeout = g_timeout_add_seconds(60, prompt_expired, self);
-            g_signal_emit(self, signals[PROMPT_CHANGED], 0);
+            const char *session = NULL;
+            if (g_variant_lookup(properties, "Session", "&o", &session)) {
+                Request *peer = g_new0(Request, 1);
+                peer->client = g_object_ref(self);
+                peer->generation = self->generation;
+                peer->operation = self->operation;
+                peer->path = g_strdup(self->transfer);
+                g_dbus_connection_call(self->bus, self->owner, session,
+                    "org.freedesktop.DBus.Properties", "GetAll",
+                    g_variant_new("(s)", "org.bluez.obex.Session1"), G_VARIANT_TYPE("(a{sv})"),
+                    G_DBUS_CALL_FLAGS_NO_AUTO_START, 5000, self->cancel, incoming_session_done, peer);
+            } else {
+                self->prompt_sender = g_strdup("Unknown sender");
+                g_signal_emit(self, signals[PROMPT_CHANGED], 0);
+            }
         }
     }
     request_free(request);
@@ -546,9 +633,11 @@ obex_client_answer(ObexClient *self, gboolean accept)
             self->prompt_timeout = 0;
         }
         g_clear_pointer(&self->prompt_name, g_free);
+        g_clear_pointer(&self->prompt_sender, g_free);
         self->prompt_size = 0;
         g_signal_emit(self, signals[PROMPT_CHANGED], 0);
         changed(self);
+        query_transfer(self);
     } else {
         clear_prompt(self, "org.bluez.obex.Error.Rejected");
         self->operation++;
@@ -566,20 +655,37 @@ registered(GObject *source, GAsyncResult *result, gpointer data)
     g_autoptr(GError) error = NULL;
     g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
     if (!self->stopped && request->generation == self->generation) {
+        self->registering = FALSE;
         self->ready = reply != NULL;
         if (!reply && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
             g_autofree char *remote_error = g_dbus_error_get_remote_error(error);
             if (g_strcmp0(remote_error, "org.bluez.obex.Error.AlreadyExists") == 0)
                 report_error(self, "Another Bluetooth file receiver is already running. "
-                                   "Stop it and restart Mytooth to receive files.");
+                                   "Stop it, then use Retry file receiver in the menu.");
             else
                 report_error(self, "The Bluetooth file receiver could not register.");
-            g_debug("OBEX receiver registration failed: %s", error->message);
+            g_debug("OBEX receiver registration failed (%s)",
+                    remote_error ? remote_error : "transport error");
         }
         changed(self);
     }
     g_object_unref(self);
     g_free(request);
+}
+
+void
+obex_client_retry(ObexClient *self)
+{
+    if (self->stopped || !self->owner || !self->registration ||
+        self->ready || self->registering)
+        return;
+    self->registering = TRUE;
+    Registration *request = g_new0(Registration, 1);
+    request->client = g_object_ref(self);
+    request->generation = self->generation;
+    g_dbus_connection_call(self->bus, self->owner, OBEX_ROOT, OBEX_MANAGER, "RegisterAgent",
+        g_variant_new("(o)", OBEX_AGENT_PATH), G_VARIANT_TYPE_UNIT,
+        G_DBUS_CALL_FLAGS_NO_AUTO_START, 10000, self->cancel, registered, request);
 }
 
 static void
@@ -593,12 +699,8 @@ appeared(GDBusConnection *bus, const char *name, const char *owner, gpointer dat
     g_free(self->owner);
     self->owner = g_strdup(owner);
     self->ready = FALSE;
-    Registration *request = g_new0(Registration, 1);
-    request->client = g_object_ref(self);
-    request->generation = self->generation;
-    g_dbus_connection_call(bus, owner, OBEX_ROOT, OBEX_MANAGER, "RegisterAgent",
-        g_variant_new("(o)", OBEX_AGENT_PATH), G_VARIANT_TYPE_UNIT,
-        G_DBUS_CALL_FLAGS_NO_AUTO_START, 10000, self->cancel, registered, request);
+    self->registering = FALSE;
+    obex_client_retry(self);
     changed(self);
 }
 
@@ -615,6 +717,7 @@ vanished(GDBusConnection *bus, const char *name, gpointer data)
     reset_transfer(self);
     g_clear_pointer(&self->owner, g_free);
     self->ready = FALSE;
+    self->registering = FALSE;
     if (active)
         report_error(self, "The Bluetooth file-transfer service stopped during a transfer.");
     changed(self);
@@ -657,8 +760,10 @@ guint64 obex_client_transferred(ObexClient *self) { return self->transferred; }
 guint64 obex_client_size(ObexClient *self) { return self->size; }
 guint obex_client_file_number(ObexClient *self) { return self->files ? self->file_index + 1 : 1; }
 guint obex_client_file_count(ObexClient *self) { return self->files ? self->files->len : 1; }
-gboolean obex_client_has_prompt(ObexClient *self) { return self->invocation != NULL && self->prompt_name != NULL; }
+gboolean obex_client_has_prompt(ObexClient *self) { return self->invocation != NULL && self->prompt_name != NULL && self->prompt_sender != NULL; }
+gboolean obex_client_awaiting_approval(ObexClient *self) { return self->invocation != NULL; }
 const char *obex_client_prompt_name(ObexClient *self) { return self->prompt_name; }
+const char *obex_client_prompt_sender(ObexClient *self) { return self->prompt_sender; }
 guint64 obex_client_prompt_size(ObexClient *self) { return self->prompt_size; }
 const char *obex_client_receive_directory(ObexClient *self) { return self->receive_directory; }
 void
@@ -708,6 +813,7 @@ obex_client_finalize(GObject *object)
     g_clear_pointer(&self->info, g_dbus_node_info_unref);
     g_free(self->owner);
     g_free(self->prompt_name);
+    g_free(self->prompt_sender);
     g_free(self->receive_directory);
     G_OBJECT_CLASS(obex_client_parent_class)->finalize(object);
 }

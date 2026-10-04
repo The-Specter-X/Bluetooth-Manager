@@ -240,6 +240,8 @@ static GVariant *
 pan_connection_settings(const char *address)
 {
     guint8 bytes[6];
+    if (!address || strlen(address) != 17)
+        return NULL;
     for (guint i = 0; i < G_N_ELEMENTS(bytes); i++) {
         int high = g_ascii_xdigit_value(address[i * 3]);
         int low = g_ascii_xdigit_value(address[i * 3 + 1]);
@@ -618,10 +620,26 @@ bt_client_new(GDBusConnection *connection)
 }
 
 void
+bt_client_cancel_pairing(BtClient *self)
+{
+    if (self->stopped || !self->owner)
+        return;
+    GHashTableIter iter;
+    gpointer path, method;
+    g_hash_table_iter_init(&iter, self->pending);
+    while (g_hash_table_iter_next(&iter, &path, &method))
+        if (g_str_equal(method, "Pair"))
+            g_dbus_connection_call(self->connection, self->owner, path, BT_DEVICE,
+                "CancelPairing", NULL, NULL, G_DBUS_CALL_FLAGS_NO_AUTO_START,
+                3000, NULL, NULL, NULL);
+}
+
+void
 bt_client_stop(BtClient *self)
 {
     if (self->stopped)
         return;
+    bt_client_cancel_pairing(self);
     self->stopped = TRUE;
     if (self->scan_timeout) {
         g_source_remove(self->scan_timeout);

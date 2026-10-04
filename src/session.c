@@ -16,6 +16,7 @@ struct Session {
     guint sleep_subscription;
     guint generation;
     gboolean stopped;
+    gboolean sleeping;
 };
 
 static Session *session_ref(Session *s) { s->refs++; return s; }
@@ -44,7 +45,7 @@ active_received(GObject *source, GAsyncResult *result, gpointer data)
         gboolean active = TRUE;
         if (reply)
             g_variant_get(reply, "(b)", &active);
-        bt_agent_set_locked(s->agent, active);
+        bt_agent_set_locked(s->agent, active || s->sleeping);
     }
     session_unref(s);
     g_free(query);
@@ -75,7 +76,7 @@ active_changed(GDBusConnection *bus, const char *sender, const char *path,
     gboolean active;
     g_variant_get(parameters, "(b)", &active);
     s->generation++; /* An old GetActive reply must not undo a newer lock signal. */
-    bt_agent_set_locked(s->agent, active);
+    bt_agent_set_locked(s->agent, active || s->sleeping);
     if (active)
         bt_client_scan(s->client, NULL);
 }
@@ -106,6 +107,7 @@ sleep_changed(GDBusConnection *bus, const char *sender, const char *path,
         return;
     gboolean sleeping;
     g_variant_get(parameters, "(b)", &sleeping);
+    s->sleeping = sleeping;
     if (sleeping) {
         s->generation++;
         bt_agent_set_locked(s->agent, TRUE);

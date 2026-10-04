@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "audio.h"
+#include "util.h"
 #include <pulse/glib-mainloop.h>
 #include <pulse/pulseaudio.h>
 #include <string.h>
@@ -48,23 +49,6 @@ audio_card_free(gpointer data)
     g_free(card->identity);
     g_ptr_array_unref(card->profiles);
     g_free(card);
-}
-
-static char *
-normalized(const char *text)
-{
-    GString *result = g_string_new(NULL);
-    for (const char *p = text ? text : ""; *p; p++)
-        if (g_ascii_isxdigit(*p))
-            g_string_append_c(result, g_ascii_toupper(*p));
-    return g_string_free(result, FALSE);
-}
-
-static gboolean
-candidate_matches(const char *candidate, const char *address)
-{
-    g_autofree char *value = normalized(candidate);
-    return address[0] && strstr(value, address) != NULL;
 }
 
 static gboolean
@@ -243,10 +227,9 @@ audio_client_new(void)
 static AudioCard *
 find_card(AudioClient *self, const char *bluetooth_address)
 {
-    g_autofree char *address = normalized(bluetooth_address);
     for (guint i = 0; self->cards && i < self->cards->len; i++) {
         AudioCard *card = g_ptr_array_index(self->cards, i);
-        if (candidate_matches(card->identity, address))
+        if (bt_address_matches(card->identity, bluetooth_address))
             return card;
     }
     return NULL;

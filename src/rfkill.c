@@ -43,6 +43,12 @@ read_events(gint fd, GIOCondition condition, gpointer data)
             g_hash_table_replace(radio->switches, GUINT_TO_POINTER(event.idx), item);
         }
     }
+    if (size == 0 || (size < 0 && errno != EAGAIN && errno != EINTR)) {
+        radio->watch = 0;
+        g_hash_table_remove_all(radio->switches);
+        radio->changed(radio->data);
+        return G_SOURCE_REMOVE;
+    }
     radio->changed(radio->data);
     return G_SOURCE_CONTINUE;
 }
